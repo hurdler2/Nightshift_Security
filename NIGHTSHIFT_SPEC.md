@@ -125,11 +125,24 @@ Bunun üç pratik sonucu var:
    ONVIF) açıkça etkinleştirmeyi ister. Servis hesabı oluştururken ve probe'un yeniden
    deneme davranışında bu hesaba katılmalı (§24.13–15).
 
-**Filo envanteri:** 14 cihazın firmware'i aynı olmayabilir; farklı tarihlerde alınmış
-cihazlar 4.001/4.002 taban çizgisinde olabilir ve e-posta gövdesi farklı olabilir.
-DMSS/DoLynk Care her cihazın sürümünü uzaktan gösterdiği için **sahaya gitmeden
-envanter çıkarılabilir**; bu PHASE 2'nin ilk işidir. Aynı sürümdeyse tek profil yeter,
-değilse sürüm başına profil gerekir.
+**Filo tek tip.** 14 cihazın tamamı aynı model ve aynı firmware. Sonuçları:
+
+- **Tek e-posta ayrıştırma profili** yeter. `firmware_email_profiles` tablosu yine de
+  kalır (SaaS ileride başka model görecek), ama V1 tek satırla çalışır ve o satır
+  gerçek e-postalarla doğrulanır.
+- **Tek kurulum şablonu** — bir cihaz mükemmel yapılandırılıp konfigürasyon diğerlerine
+  kopyalanır (§5.6).
+- **Tek doğrulama seti** yeter; probe bir cihazda geçerse diğerlerinde de geçmesi beklenir
+  (yine de her cihazda çalıştırılır, sonuç kayda geçer).
+
+**Monokültür riski.** Madalyonun diğer yüzü: bir firmware davranışı bizi kırarsa
+14 sahayı **aynı anda** kırar. Karşı önlemler:
+
+- Ayrıştırıcı hiçbir koşulda olayı düşürmez; ayrıştırılamayan alan `UNKNOWN` olur (§7.3).
+- Her cihazın firmware sürümü kayıtlıdır; değişirse uyarı üretilir.
+- **Ayrıştırma başarısızlık oranı izlenir**; ani yükseliş firmware güncellemesi
+  şüphesidir ve ham e-posta örneği otomatik saklanır (`email_samples`).
+- Müşteriye firmware güncellemelerini bize haber vermesi sözleşmede belirtilir.
 
 ## 2.5 Fiziksel portlar
 
@@ -309,6 +322,48 @@ python scripts/dahua_probe.py --host <DVR_IP> --username <servis_hesabı> \
 
 Bu bir saha aracı; sahada kalıcı olarak çalışmaz. Ürettiği JSON rapor cihaz kaydına
 iliştirilir: model, firmware, kanal eşlemeleri, gerçekten görülen olay kodları.
+
+## 5.6 Filo dağıtımı — 14 özdeş cihaz
+
+Filonun tamamı aynı model ve aynı firmware (§2.4b). Bu, kurulumu 14 kez tekrarlanan
+bir el işi olmaktan çıkarır.
+
+### Konfigürasyon şablonu
+
+1. **Bir cihazı referans olarak mükemmel yapılandır** (§5.1–5.4) ve doğrula (§5.5).
+2. Web arayüzünden konfigürasyonu dışa aktar (`System → Backup/Import Config`).
+3. Kalan 13 cihaza içe aktar.
+4. Her cihazda yalnızca **cihaza özel farkları** ayarla:
+
+```
+cihaz adı                (e-posta gövdesinde görünür, site ile eşleşmeli)
+SMTP kullanıcı + parola  (cihaza özel, §7.1)
+kanal adları             (o sahanın kameraları)
+IVS/perimeter kural geometrisi (o sahanın görüntüsüne göre çizilir)
+ağ ayarları              (DHCP değilse)
+```
+
+Şablon dosyası **parola içerdiği için** sır muamelesi görür: şifreli olarak saklanır,
+repoya girmez, kurulum sonrası silinir.
+
+### Kademeli yayılım
+
+14 cihazı birden yapılandırmak, bir hatayı 14 kez yapmak demektir.
+
+```
+1 saha   → tam doğrulama, bir hafta gerçek kullanım, yanlış pozitif ölçümü
+3 saha   → şablonun farklı sahalarda tuttuğunu doğrula (aydınlatma, kamera açısı)
+10 saha  → kalan yayılım
+```
+
+### Perimeter kanal planı
+
+Cihaz başına perimeter protection **4 kanalla sınırlı** (§2.1), saha başına ~5 kamera
+var. Yani her sahada 4 kameraya tripwire/intrusion kuralı yazılabilir; 5. kamera
+yalnızca SMD Plus ile korunur — bu bir eksiklik değil, SMD Plus zaten 8 kanalda çalışıyor.
+
+Seçim kuralı: **perimeter kuralları çevreye bakan kameralara** verilir (çit hattı, giriş
+kapısı, malzeme sahası sınırı). İç alana bakan kamera SMD Plus ile bırakılır.
 
 ---
 
@@ -813,6 +868,7 @@ Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı 
 | **6** | Zone + schedule + risk | Gece yasak alanda insan alarm üretiyor, normal alanda üretmiyor |
 | **7** | Push + alarm workflow + escalation | Olay → push → alarm detayı → ACK zinciri çalışıyor |
 | **8** | Sağlık: watchdog, video loss, tamper, disk, bastırma hiyerarşisi | İnternet kesintisi tek alarm üretiyor |
+| **8b** | Filo yayılımı: 1 → 3 → 10 saha, konfigürasyon şablonu (§5.6) | 14 cihaz aynı şablonla kurulu ve olay üretiyor |
 | **9** | Caydırıcı kurulum paketi + DMSS deep link | Sahada ses çalıyor, uygulamadan DMSS açılıyor |
 | **10** | Multi-tenant sertleştirme + RBAC | Tenant A, tenant B verisine hiçbir endpointten erişemiyor |
 | **11** | Abonelik ve kullanım sayaçları | Plan limitleri gerçek fonksiyonları etkiliyor |
@@ -842,7 +898,35 @@ DVR kapat, gece/gündüz aydınlatma farkı, yağmur/rüzgâr yanlış pozitifle
 
 ---
 
-# 22. PİLOT BAŞARI METRİKLERİ
+# 22. KAPASİTE, MALİYET VE PİLOT METRİKLERİ
+
+## 22.1 Filo boyutlandırma
+
+14 DVR × ~5 kamera = **~70 kamera**. Olay hacmi tahmini: aktif gecelerde saha başına
+~40 insan olayı → **~560 olay/gece**, ~17.000 olay/ay.
+
+| Kaynak | Hesap | Sonuç |
+|--------|-------|-------|
+| Gelen e-posta | 17.000 × ~250 KB | **~4 GB/ay** |
+| Medya deposu (30 gün, orijinal + annotated) | 17.000 × 250 KB × 2 | **~9 GB** sabit durum |
+| Saha başına veri | 40 × 250 KB × 30 | **~300 MB/ay/DVR** |
+| AI çıkarımı | ~570 görüntü/gün | **GPU gerekmiyor** |
+| MTA | 560 mesaj/gece | Tek küçük sunucu fazlasıyla yeter |
+
+**En önemli sonuç: V1 için GPU yok.** Olay başına tek bir JPEG işlendiği için CPU
+üzerinde ONNX çalıştırmak yeterli — günde bir dakikanın altında toplam çıkarım süresi.
+GPU ancak sürekli video analizine geçilirse gerekir ki V1 kapsamında o yok (§17).
+
+Tüm V1 altyapısı (backend + AI + MTA + PostgreSQL + object storage) tek bir orta
+boy sunucuda çalışır. Bu, edge gateway mimarisine göre hem donanım hem işletme
+maliyetinde büyük fark demektir.
+
+Sınır uyarısı: bu rakamlar **olay-tetiklemeli** tasarıma bağlıdır. Yanlış pozitif
+oranı kontrolden çıkarsa (rüzgâr, yağmur, böcek, aydınlatma değişimi) e-posta hacmi
+katlanır. Bu yüzden §22.2'deki yanlış pozitif metriği yalnızca kalite değil, **maliyet
+metriğidir**.
+
+## 22.2 Pilot başarı metrikleri
 
 Bir haftalık gerçek şantiye testinde ölç:
 
@@ -918,8 +1002,8 @@ Datasheet'in cevaplamadığı, ilk kurulumda **ölçülecek** sorular. Hiçbiri 
 14. Hesap kilitleme politikası nedir (kaç hatalı denemede, ne kadar süre)? Probe ve
     event stream yeniden deneme aralıkları buna göre ayarlanır.
 15. Servis hesabı için parola karmaşıklık kuralı nedir?
-16. Filo envanteri: 14 cihazın model + firmware listesi (DMSS/DoLynk Care üzerinden,
-    sahaya gitmeden) — kaç farklı e-posta profili gerekecek?
+16. Konfigürasyon dışa/içe aktarma (`System → Backup/Import Config`) bu firmware'de
+    çalışıyor mu ve içe aktarım hangi alanları geçersiz kılıyor? (§5.6 şablon akışı buna bağlı)
 
 Bu sorular `scripts/dahua_probe.py` çıktısı + cihaz arayüzü ekran görüntüleriyle
 yanıtlanır ve §24 bu dokümanda cevaplarla güncellenir.
