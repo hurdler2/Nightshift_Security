@@ -1,0 +1,157 @@
+# Nightshift Security — PHASE 0 development stack.
+#
+# Exit criteria for PHASE 0: `docker compose -f infra/docker-compose.yml up -d`
+# brings every service up healthy.
+#
+# Not production: credentials are dev defaults, TLS terminates elsewhere, and no
+# port here should ever be exposed to the internet (spec §46).
+
+name: nightshift
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nightshift
+      POSTGRES_PASSWORD: nightshift
+      POSTGRES_DB: nightshift
+      TZ: UTC
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nightshift -d nightshift"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: nightshift
+      RABBITMQ_DEFAULT_PASS: nightshift
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  minio:
+    # MinIO images are served from quay.io; Docker Hub mirrors are access-restricted.
+    image: quay.io/minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: nightshift
+      MINIO_ROOT_PASSWORD: nightshift-secret
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    # Private bucket only — public buckets are forbidden (spec §24).
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 nightshift nightshift-secret &&
+      mc mb --ignore-existing local/nightshift-media &&
+      mc anonymous set none local/nightshift-media &&
+      echo 'bucket ready (private)'
+      "
+    restart: "no"
+
+  backend:
+    build:
+      context: ../backend
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://nightshift:nightshift@postgres:5432/nightshift
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://nightshift:nightshift@rabbitmq:5672//
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: nightshift-media
+      S3_ACCESS_KEY: nightshift
+      S3_SECRET_KEY: nightshift-secret
+      AI_SERVICE_URL: http://ai-service:8100
+      MEDIA_GATEWAY_URL: http://mediamtx:9997
+      JWT_SECRET: dev-only-secret-change-me-32-chars!!
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  ai-service:
+    build:
+      context: ../ai-service
+    environment:
+      AI_PROVIDER: stub
+    ports:
+      - "127.0.0.1:8100:8100"
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    environment:
+      MTX_PROTOCOLS: tcp
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "127.0.0.1:8554:8554"   # rtsp (edge publish, LAN/tunnel only)
+      - "127.0.0.1:8889:8889"   # webrtc
+      - "127.0.0.1:8888:8888"   # hls
+      - "127.0.0.1:9997:9997"   # control api
+
+  edge-agent:
+    build:
+      context: ../edge-agent
+    profiles: ["edge"]          # opt-in: `docker compose --profile edge up`
+    environment:
+      # host networking is used so the agent can reach a lab XVR on the LAN
+      EDGE_CLOUD_URL: http://localhost:8000
+      EDGE_DATA_DIR: /var/lib/nightshift-edge
+      EDGE_LOG_LEVEL: INFO
+    volumes:
+      - edge-data:/var/lib/nightshift-edge
+    # The real gateway runs on-site next to the XVR, not in this compose file;
+    # this service exists for development against a lab device.
+    network_mode: "host"
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
+  minio-data:
+  edge-data:

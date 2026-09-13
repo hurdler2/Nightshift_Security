@@ -1,0 +1,33 @@
+--myboundary
+Content-Type: text/plain
+Content-Length: 263
+
+Code=SmartMotionHuman;action=Start;index=0;data={
+   "RegionName" : [ "Region1" ],
+   "SmartMotionEnable" : true,
+   "WindowId" : [ 0 ],
+   "object" : [
+      {
+         "Rect" : [ 3184, 2872, 4088, 5296 ],
+         "ObjectType" : "Human"
+      }
+   ]
+}
+--myboundary
+Content-Type: text/plain
+Content-Length: 35
+
+Code=Heartbeat;action=Pulse;index=0
+--myboundary
+Content-Type: text/plain
+Content-Length: 41
+
+Code=SmartMotionHuman;action=Stop;index=0
+--myboundary
+Content-Type: text/plain
+Content-Length: 130
+
+Code=SmartMotionVehicle;action=Start;index=3;data={
+   "SmartMotionEnable" : true,
+   "Object" : { "ObjectType" : "Vehicle" }
+}

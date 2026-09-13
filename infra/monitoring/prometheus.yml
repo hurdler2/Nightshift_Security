@@ -1,0 +1,18 @@
+# Metrics scrape config (spec §45).
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: nightshift-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+
+  - job_name: nightshift-ai
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ai-service:8100"]
+
+  # Edge gateways are behind CGNAT and cannot be scraped; they push their counters
+  # with each heartbeat instead (spec §9, §39).

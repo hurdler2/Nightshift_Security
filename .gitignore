@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+edge-data/
+
+# Probe output (may contain device details)
+probe-reports/
+*.probe.json
+snapshot*.jpg
+
+# Media / spool
+spool/
+*.mp4
+*.jpg
+!docs/**/*.jpg
+
+# Node / Flutter
+node_modules/
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins*
+mobile/ios/Pods/
+mobile/android/.gradle/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

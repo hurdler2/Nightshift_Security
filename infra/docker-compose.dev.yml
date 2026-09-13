@@ -1,0 +1,18 @@
+# Development overlay: source bind-mounts and hot reload.
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up
+
+services:
+  backend:
+    volumes:
+      - ../backend/app:/app/app:ro
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      LOG_LEVEL: DEBUG
+
+  ai-service:
+    volumes:
+      - ../ai-service/app:/app/app:ro
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--reload"]

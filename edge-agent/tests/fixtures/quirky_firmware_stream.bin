@@ -1,0 +1,31 @@
+--myboundary
+Content-Type: text/plain
+Content-Length:263
+
+Code=SmartMotionHuman;action=Start;index=0;data={
+   "RegionName" : [ "Region1" ],
+   "SmartMotionEnable" : true,
+   "WindowId" : [ 0 ],
+   "object" : [
+      {
+         "Rect" : [ 3184, 2872, 4088, 5296 ],
+         "ObjectType" : "Human"
+      }
+   ]
+}
+
+
+--myboundary
+Content-Type: text/plain
+Code=FaceRecognitionQuirk;action=Flicker;index=2;data={"Vendor":"future-firmware"}
+--myboundary
+Content-Type: text/plain
+
+Heartbeat
+--myboundary
+Content-Type: text/plain
+Content-Length: 63
+
+Code=VideoLoss;action=Start;index=5;data={
+   "Channel" : 5
+}

@@ -1,0 +1,26 @@
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "S", "C4", "SIM", "RUF"]
+ignore = [
+  "S101",     # assert - used in tests
+  "B008",     # FastAPI Depends() in defaults
+  "ASYNC109", # timeout parameters are deliberate: every device call must be bounded
+  "RUF002",   # docstrings are Turkish and use typographic characters on purpose
+  "RUF003",   # same, for comments
+]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S108", "S311", "E501"]
+"scripts/**" = ["S603", "S607"]
+"**/rtsp.py" = ["S603", "S607"]
+"**/playback.py" = ["S603", "S607"]
+"**/probe.py" = ["S603", "S607"]
+"**/ffprobe.py" = ["S603", "S607"]
+
+[lint.isort]
+known-first-party = ["app", "nightshift_edge", "tests"]
+
+[format]
+quote-style = "double"

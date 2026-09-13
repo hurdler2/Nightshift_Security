@@ -1,0 +1,779 @@
+# Nightshift Security — V1 Teknik Spesifikasyon
+
+> **Amaç:** Şantiyeye **hiçbir ek donanım koymadan**, müşterinin elindeki Dahua DVR'ı
+> kullanarak hırsızı olay anında yakalamak: insan algılandığı saniyede sahada sesli
+> caydırıcı devreye girsin, telefona fotoğraflı alarm düşsün.
+>
+> **Pilot donanım:** Dahua **DH-XVR5108HS-I3/T**, 8 analog kanal, WizSense.
+>
+> **Tarih:** 2026-09-13 · **Sürüm:** V1 (zero-device)
+>
+> Bu doküman **source of truth**'tur. Önceki sürüm (edge gateway mimarisi)
+> `docs/legacy-siteguard-v1-spec.md` altında referans olarak durur.
+
+---
+
+# 0. UYGULAYICI İÇİN ANA TALİMAT
+
+1. Bir özelliği sessizce atlama; atlanacaksa §17'ye yaz.
+2. TODO gerekiyorsa `TODO(V1-BLOCKER)` veya `TODO(V1-NONBLOCKER)` etiketi kullan.
+3. **Donanım davranışını uydurma.** Datasheet'te olmayan bir yetenek, cihaz üzerinde
+   doğrulanana kadar `UNKNOWN`'dır. Asla `true` raporlama.
+4. Şantiyeye ek cihaz gerektiren çözüm üretme. Tek istisna §18'deki opsiyonel tünel.
+5. DVR'a internetten port açmayı gerektiren çözüm üretme. CGNAT altında çalışmak zorunlu.
+6. DVR kullanıcı adı/parolası mobil uygulamaya veya cloud loglarına gitmez.
+7. Çoklu müşteri izolasyonu (`tenant_id`) en baştan.
+8. Yüz tanıma/tespiti V1'de **yok** — §19.3.
+9. Python 3.12+, FastAPI, PostgreSQL, Flutter. Backend modular monolith.
+10. API ve olay payload'ları OpenAPI/JSON Schema ile belgelenir.
+
+---
+
+# 1. NEDEN BU SÜRÜM FARKLI
+
+Önceki mimari her şantiyeye bir **edge gateway mini PC** koyuyordu. O cihaz canlı
+yayını, klip üretimini ve uzaktan konfigürasyonu mümkün kılıyordu; karşılığında her
+saha için donanım maliyeti, kurulum, arıza ve bakım getiriyordu.
+
+Bu sürümde saha donanımı **yalnızca DVR**. Kayıp özellikler §17'de açıkça listelendi.
+Ana hedef — *hırsızı suçüstü yakalamak* — donanımsız da karşılanıyor, çünkü o hedefin
+üç bileşeni var ve üçü de DVR'ın kendi yetenekleriyle çalışıyor:
+
+1. **Doğru algılama** → DVR'ın SMD Plus'ı insan/araç ayrımını cihaz üzerinde yapıyor.
+2. **Anında caydırma** → DVR alarm anında sahada sesli uyarı çalabiliyor (§6).
+3. **Anında haber** → DVR alarm e-postasını fotoğrafla birlikte dışarı gönderebiliyor.
+
+---
+
+# 2. DOĞRULANMIŞ DONANIM GERÇEKLERİ
+
+Kaynak: DH-XVR5108HS-I3 resmi datasheet (Rev 002.000, 2023-07-20). Aşağıdakiler
+datasheet'ten **birebir doğrulanmıştır**; işaretsiz her şey cihaz üzerinde
+doğrulanacaktır.
+
+## 2.1 AI yetenekleri
+
+| Özellik | Kanal sayısı |
+|---------|--------------|
+| SMD Plus (insan / motorlu araç ikincil filtreleme) | **8 kanal** (hepsi) |
+| Perimeter Protection (tripwire, intrusion), kanal başına 10 IVS kuralı | **4 kanal** (General Model) |
+| Face Detection | 2 kanal |
+| Face Recognition | 2 kanal, 10 veritabanı / 10.000 yüz |
+
+## 2.2 En kritik bulgu: AI Mode tekil bir seçimdir
+
+Datasheet dipnotları:
+
+> *SMD Plus takes effect when **SMD or IVS&SMD** is selected in AI Mode.*
+> *Perimeter Protection takes effect when **IVS&SMD** is selected in AI Mode.*
+> *Face Recognition takes effect when **Face** is selected in AI Mode.*
+
+Yani cihazda tek bir AI Mode seçilir ve modlar birbirini dışlar.
+
+**V1 kararı: `AI Mode = IVS&SMD`.** Bu seçimle 8 kanalda SMD Plus + 4 kanalda perimeter
+protection elde ederiz ve **yüz tespiti donanım seviyesinde hiç çalışmaz**. Gizlilik
+sorunu yazılımla değil, cihaz modu ile kökten çözülür (§19.3).
+
+## 2.3 Alarm türleri ve linkage
+
+```
+General Alarm      : motion detection; video loss; video tampering
+Anomaly Alarm      : no disk; disk error; disk full; offline; IP conflict; MAC conflict
+Intelligent Alarm  : face detection; face recognition; perimeter protection
+Alarm Linkage      : Record; snapshot (panoramic); IPC external alarm output;
+                     voice prompt; buzzer; log; email
+```
+
+**Linkage listesinde FTP yok.** Bu modelin protokol listesinde de FTP yok. Dolayısıyla
+**medya çıkışı için tek datasheet-doğrulamalı yol e-posta ekidir**. FTP/SFTP üzerine
+tasarım yapılmayacak; cihaz arayüzünde varsa §24'te doğrulanacak.
+
+## 2.4 Ağ protokolleri
+
+```
+HTTP; HTTPS; TCP/IP; IPv4; IPv6; RTSP; UDP; NTP; DHCP; DNS; SMTP; UPnP;
+IP Filter; DDNS; Alarm Server; P2P; Auto Registration
+Interoperability: ONVIF 22.12 (Profile T/S/G); CGI; SDK
+```
+
+`SMTP`, `Alarm Server`, `P2P` ve `Auto Registration` bu mimarinin dayanak noktaları.
+
+## 2.5 Fiziksel portlar
+
+```
+Analog giriş : 8 BNC (HDCVI/AHD/TVI/CVBS auto-detect)
+Ses giriş    : 1 RCA + 8 coaxial audio       Ses çıkış: 1 RCA
+Two-way talk : var (1. kanalın ses girişini paylaşır)
+HDD          : 1 SATA, 16 TB'a kadar
+Ağ           : 1 × 10/100 Mbps                RS-485: 1 (PTZ)
+Alarm in/out : YOK — cihazda alarm terminali bulunmuyor
+```
+
+**Alarm rölesi olmadığı için siren doğrudan sürülemez.** Caydırıcı ses **audio out (RCA)**
+üzerinden verilir (§6).
+
+## 2.6 Diğer sınırlar
+
+- IP kanal eklenirse: *"After IP channels are added beyond the existing channels, the
+  AI Function (IVS, SMD, FACE) will be disabled."* → **IP kanal genişletmesi yapılmayacak.**
+- 5MP modda encoder bütçesi düşük: 4 kanal 5MP@1–6 fps. Kamera çözünürlüğü/fps seçimi
+  kurulumda bilinçli yapılmalı.
+- Ağ portu 100 Mbps; 8 kanal main stream aynı anda dışarı taşınamaz (zaten taşınmayacak).
+- Video: AI Coding / Smart H.265+ / H.265 / Smart H.264+ / H.264.
+
+---
+
+# 3. MİMARİ KARARI: DIŞARI ÇIKIŞ YOLU
+
+Şantiyede ek cihaz yok, CGNAT var, port açmak yasak. DVR'ın **kendi başlattığı**
+bağlantılar dışında seçenek yoktur. Değerlendirilen yollar:
+
+| Yol | Durum | V1 kararı |
+|-----|-------|-----------|
+| **SMTP alarm e-postası (snapshot ekli)** | Datasheet: linkage listesinde `email`, protokolde `SMTP` | **Birincil taşıma** |
+| **Auto Registration** (cihaz dışarı bağlanır, platform içeri erişir) | Datasheet'te var; Dahua SDK sunucu tarafı gerekir | Tier B, §18 |
+| **Alarm Server** | Datasheet'te var; konuştuğu protokol doğrulanmadı | §24'te doğrulanacak; HTTP ise e-postanın önüne geçer |
+| P2P (DMSS) | Vendor kapalı ekosistemi | Canlı izleme için müşteriye yönlendirme (§12) |
+| FTP/SFTP | Bu modelde listelenmiyor | Tasarımda kullanılmayacak |
+| ONVIF event subscribe | İçeri bağlantı gerektirir | CGNAT altında imkânsız |
+| Port forwarding / DDNS | Yasak ve tehlikeli | **Reddedildi** — §19.1 |
+
+E-posta modern bir entegrasyon yolu değil, ama bu kısıt kümesinde **çalışan tek
+datasheet-doğrulamalı yol** o. Zayıflıkları ve karşı önlemleri §7.4'te.
+
+---
+
+# 4. V1 MİMARİSİ
+
+```
+   Şantiye (ek donanım YOK)                 │            Nightshift Cloud
+                                            │
+  Analog kameralar                          │
+        │                                   │
+   Dahua XVR5108HS-I3                       │
+   AI Mode = IVS&SMD                        │
+        ├── SMD Plus (8 kanal)              │
+        ├── Perimeter (4 kanal)             │
+        │                                   │
+        ├─► voice prompt ─► RCA ─► horn hoparlör   (anında, internetsiz çalışır)
+        ├─► record + snapshot ─► yerel HDD           (delil, DMSS ile izlenir)
+        │                                   │
+        └─► SMTP (TLS, outbound) ───────────┼──► Ingest MTA
+                                            │         │
+                                            │    E-posta ayrıştırıcı
+                                            │    (site kimliği, kanal, olay, JPEG)
+                                            │         │
+                                            │    AI ikinci doğrulama (insan var mı?)
+                                            │         │
+                                            │    Zone + Schedule + Risk
+                                            │         │
+                                            │    Alarm + Escalation
+                                            │         │
+                                            │    FCM / APNs ──► Flutter uygulaması
+                                            │                        │
+                                            │                   canlı görüntü →
+                                            │                   DMSS deep link
+```
+
+Cloud bileşenleri değişmedi: PostgreSQL (kaynak veri), Redis (cache/lock), RabbitMQ
+(AI ve bildirim kuyruğu), S3/MinIO (medya, private bucket + presigned URL).
+
+---
+
+# 5. CİHAZ KURULUMU (COMMISSIONING)
+
+Kurulum tek seferlik ve elle yapılır; ürünün bir parçasıdır, "kullanıcı halleder"
+denmez. Kurulum ekibi için kontrol listesi:
+
+## 5.1 Temel
+
+```
+[ ] Firmware sürümü kaydedildi
+[ ] Tarih/saat doğru, NTP açık, timezone doğru
+[ ] admin parolası değiştirildi
+[ ] Nightshift için ayrı servis hesabı açıldı (admin kullanılmaz)
+[ ] IP kanal genişletmesi KAPALI (AI fonksiyonlarını devre dışı bırakır)
+[ ] Kayıt planı 7/24 veya en az olay bazlı aktif
+[ ] HDD sağlıklı, kapasite retention hedefine uygun
+[ ] Router üzerinde DVR'a port yönlendirmesi YOK
+[ ] DVR internete çıkabiliyor (SMTP 465/587 açık)
+```
+
+## 5.2 AI
+
+```
+[ ] AI Mode = IVS&SMD
+[ ] SMD Plus tüm ilgili kanallarda açık, hedef = Human (+ Vehicle, karara göre)
+[ ] Perimeter protection en kritik 4 kanalda: tripwire ve/veya intrusion
+[ ] Perimeter kurallarında hedef filtresi Human/Vehicle seçili
+[ ] Yüz tespiti kullanılmıyor (AI Mode zaten dışlıyor) — §19.3
+[ ] Hassasiyet ve zaman planı ayarlandı (gündüz/gece farklı olabilir)
+```
+
+## 5.3 Alarm linkage
+
+```
+[ ] Snapshot açık (alarm anı görüntüsü)
+[ ] Record açık, pre-record süresi ayarlandı
+[ ] Email açık, "attach picture" işaretli
+[ ] Email alıcısı = siteye özel ingest adresi (§7.1)
+[ ] Email gönderim aralığı (send interval) 60 sn veya altına çekildi
+[ ] Health/test e-postası periyodik açık (§13)
+[ ] Voice prompt açık, ses dosyası yüklendi (§6)
+[ ] Buzzer tercihe göre
+```
+
+## 5.4 Kanal isimlendirme
+
+Kanal adları e-posta gövdesinde geliyorsa eşlemenin anahtarıdır. Kurulumda her kanala
+`KAMERA-01 Depo Arka` gibi **kararlı ve tekil** bir ad verilir ve aynısı Nightshift
+uygulamasına girilir.
+
+## 5.5 Doğrulama
+
+Kurulum ekibinin dizüstü bilgisayarından, DVR ile aynı ağda, tek seferlik:
+
+```bash
+python scripts/dahua_probe.py --host <DVR_IP> --username <servis_hesabı> \
+  --ask-password --trigger-channel 1 --listen 60
+```
+
+Bu bir saha aracı; sahada kalıcı olarak çalışmaz. Ürettiği JSON rapor cihaz kaydına
+iliştirilir: model, firmware, kanal eşlemeleri, gerçekten görülen olay kodları.
+
+---
+
+# 6. CAYDIRICILIK — EN ÖNEMLİ TEK ÖZELLİK
+
+Bir hırsızı "suçüstü yakalamak" iki sonuçtan biriyle biter: ya adam kaçar (mal kurtulur),
+ya yakalanır (birinin gelmesi gerekir). İkincisi dakikalar sürer; birincisi **saniyeler**.
+
+DVR'ın `voice prompt` linkage'ı, alarm anında yerel olarak, internet olmadan, cloud
+gecikmesi olmadan bir ses dosyası çalar. RCA audio out'a bir **amfili horn hoparlör**
+bağlanır.
+
+```
+Kamera → SMD Plus insan tespiti → voice prompt → hoparlör:
+  "Bu alan 24 saat kamera ile kayıt altındadır. Güvenlik birimi bilgilendirildi."
+```
+
+Bu, mimarinin geri kalanından bağımsız çalışır ve gecikmesi ~1 saniyedir. Maliyeti bir
+hoparlör + kablo. Kurulum paketinin zorunlu parçası olmalı.
+
+Notlar:
+
+- Ses seviyesi ve saat aralığı gürültü mevzuatına göre ayarlanmalı; gece 23:00–07:00
+  arası ses seviyesi yerel kurallara tabidir. Müşteriye bu sorumluluk yazılı bildirilir.
+- Alarm rölesi olmadığı için elektrikli siren doğrudan sürülemez (§2.5). Röle gerekiyorsa
+  bir TiOC/alarm çıkışlı IP kamera üzerinden `IPC external alarm output` linkage'ı
+  kullanılabilir — bu ek donanımdır, V1 zorunluluğu değildir.
+
+---
+
+# 7. E-POSTA INGEST SÖZLEŞMESİ
+
+## 7.1 Adresleme = kimlik
+
+Her DVR için tekil ve tahmin edilemez bir alıcı adresi üretilir:
+
+```
+<rastgele-16-hex>@in.nightshift.<tld>        örn. a3f9c1d47b20e85f@in.nightshift.app
+```
+
+Bu adres aynı zamanda paylaşılan sırdır: hangi tenant/site/cihaz olduğunu belirler.
+Sızarsa tek komutla döndürülür (rotate) ve DVR'da güncellenir.
+
+Alan adı ayrı tutulur (`in.` alt alanı) ki kurumsal e-posta trafiğiyle karışmasın.
+
+## 7.2 Ingest hattı
+
+```
+DVR ──SMTP/TLS──► kendi MTA'mız (Postfix/Haraka)
+                        │  (RFC5321 alıcıya göre yönlendirme)
+                        ▼
+                  ingest kuyruğu (RabbitMQ)
+                        ▼
+                  email_parser  →  event + media_asset
+```
+
+Üçüncü parti posta kutusundan IMAP ile çekmek yerine **kendi MTA'mıza teslim** tercih
+edilir: gecikme düşer, spam filtresi araya girmez, gönderen IP'sini görürüz.
+
+## 7.3 Ayrıştırma
+
+E-posta gövdesinin birebir biçimi firmware'e göre değişir. **Biçim koda gömülmez.**
+
+- Kurulumda cihazdan gelen ilk e-posta `email_samples` tablosuna ham olarak kaydedilir.
+- Ayrıştırıcı, firmware profiline bağlı **regex kural setiyle** çalışır
+  (`firmware_email_profiles`).
+- Çıkarılacak alanlar: olay türü, kanal numarası, kanal adı, cihaz adı, olay zamanı.
+- Ayrıştırılamayan alan → `UNKNOWN`, olay yine de kaydedilir ve alarm üretebilir.
+  **Ayrıştırma hatası olayı düşürmez.**
+- Ekteki JPEG'ler `media_assets` olarak S3'e yazılır; içerik tipi ve magic byte doğrulanır.
+
+## 7.4 E-posta taşımasının zayıflıkları ve karşı önlemler
+
+| Risk | Önlem |
+|------|-------|
+| Sahte alarm enjeksiyonu | Adres = sır; gönderen IP'si sitenin bilinen IP'siyle karşılaştırılır; hız limiti; anormallik uyarısı |
+| Gecikme | Kendi MTA'mız, üçüncü parti kutu yok; gecikme ölçülür ve metriklenir (§22) |
+| E-posta hiç gelmiyor | Sağlık watchdog (§13): beklenen periyodik e-posta gelmezse site "sessiz" alarmı |
+| Aynı olay için onlarca e-posta | DVR send interval + cloud dedup (§8.2) |
+| DVR SMTP kimlik bilgisi | Site başına ayrı, yalnızca gönderim yetkili hesap; sızarsa tek site etkilenir |
+| Ek boyutu / kota | Ek boyut sınırı, kota aşımında metadata korunur, medya düşürülür |
+
+---
+
+# 8. OLAY MODELİ
+
+## 8.1 Olay türleri (DVR kaynaklı)
+
+```
+person_detected      ← SMD Plus human
+vehicle_detected     ← SMD Plus vehicle
+line_crossing        ← perimeter tripwire
+zone_intrusion       ← perimeter intrusion
+motion_detected      ← klasik hareket (düşük güven)
+video_loss           ← kanal görüntü kaybı
+video_tampering      ← kamera kapatma/çevirme
+storage_*            ← disk yok / hata / dolu
+device_offline       ← anomaly alarm veya watchdog
+```
+
+## 8.2 Dedup
+
+```
+Anahtar : tenant_id + site_id + device_id + channel + event_type
+Pencere : 60 saniye (varsayılan; kural bazında değiştirilebilir)
+```
+
+Eski spec'te 15 sn idi; e-posta taşımasında DVR'ın kendi gönderim aralığı da devrede
+olduğu için 60 sn daha gerçekçi.
+
+## 8.3 Yaşam döngüsü
+
+```
+NEW → VERIFYING → VERIFIED → ALERTED → ACKNOWLEDGED → RESOLVED
+                     └────────────────────────────► FALSE_POSITIVE
+```
+
+## 8.4 İdempotency
+
+E-posta yeniden teslim edilebilir. Anahtar: `message_id` + cihaz + olay zamanı.
+`UNIQUE(source_message_id)`.
+
+---
+
+# 9. AI İKİNCİ DOĞRULAMA
+
+DVR'ın SMD Plus'ı birinci filtre. Cloud AI ikinci filtre; girdi **e-posta ekindeki
+JPEG**.
+
+```
+Snapshot → person/vehicle detector → bounding box + confidence
+        → zone testi (bizim polygon'larımız, snapshot üzerinde)
+        → schedule testi (site timezone)
+        → risk skoru → alarm / log-only
+```
+
+Model iş mantığına gömülmez; `DetectorProvider` arayüzü üzerinden çalışır (ONNX /
+TensorRT / uzak GPU değiştirilebilir). Ticari lisans uyumu kontrol edilmeden kısıtlı
+lisanslı model production'a alınmaz.
+
+**AI servisi çökerse alarm kaybedilmez** (§11.3).
+
+---
+
+# 10. ZONE, SCHEDULE, RISK
+
+## 10.1 Zone
+
+DVR'a uzaktan kural yazamayız, ama **kendi zone'larımızı snapshot üzerinde**
+uygulayabiliriz. Kullanıcı uygulamada kameranın son görüntüsü üzerine polygon çizer;
+AI'ın bulduğu kişinin ayak noktası (bounding box alt-orta) polygon içinde mi diye
+bakılır.
+
+Koordinatlar normalize (0.0–1.0). Zone tipleri: `NORMAL`, `RESTRICTED`, `IGNORE`,
+`ENTRY`, `EXIT`, `VEHICLE_ONLY`, `FIRE_RISK`.
+
+Kamera açısı değişirse zone geçersizleşir → tamper tespiti zone'ları da geçersiz kılar.
+
+## 10.2 Schedule
+
+Site'in IANA timezone'una göre değerlendirilir. Gece yarısını geçen aralıklar
+(19:00–06:00) doğru desteklenmelidir. Tüm timestamp'ler DB'de UTC `timestamptz`.
+
+## 10.3 Risk skoru (varsayılan, konfigüre edilebilir)
+
+```
+person_detected                 +10
+outside_business_hours          +25
+restricted_zone                 +30
+perimeter_rule_triggered        +15
+repeated_entry_same_camera      +10
+camera_tamper_near_event        +20
+vehicle_in_restricted_zone      +20
+ai_confidence_below_threshold   -15
+```
+
+```
+0–29 INFO · 30–49 LOW · 50–69 MEDIUM · 70–84 HIGH · 85–100 CRITICAL
+```
+
+---
+
+# 11. ALARM VE BİLDİRİM
+
+## 11.1 Push
+
+```json
+{
+  "type": "security_alert",
+  "event_id": "uuid",
+  "severity": "CRITICAL",
+  "site_name": "Beton Tesisi",
+  "camera_name": "Depo Arka",
+  "title": "İnsan algılandı",
+  "body": "Yasak bölgede kişi tespit edildi",
+  "occurred_at": "2026-09-12T22:14:32Z"
+}
+```
+
+Push içinde DVR credential veya RTSP URL bulunmaz. Uygulama alarm detayına deep-link
+eder; snapshot alarm ekranında ilk görünen şeydir.
+
+## 11.2 Escalation
+
+```
+T+0   → Bekçi / saha sorumlusu
+T+60  → Şantiye şefi
+T+180 → Güvenlik müdürü / firma sahibi
+```
+
+Biri ACK yaparsa zincir durur. Eski spec'teki 30/60/120 sn kademeleri, e-posta
+taşımasının gerçek gecikmesi ölçülene kadar 60/180 olarak gevşetildi.
+
+## 11.3 AI kullanılamıyorsa
+
+```
+if_ai_unavailable: ALERT_ON_VENDOR_EVENT   (güvenlik kuralları için varsayılan)
+                   QUEUE_ONLY
+                   DROP
+```
+
+Push metni: *"İnsan alarmı — AI doğrulama geçici olarak kullanılamıyor"*.
+
+## 11.4 Çözüm kodları
+
+```
+TRUE_SECURITY_INCIDENT · SUSPICIOUS_ACTIVITY · AUTHORIZED_PERSON · FALSE_POSITIVE
+ANIMAL · WEATHER · LIGHT_CHANGE · MAINTENANCE · CAMERA_ERROR · OTHER
+```
+
+Bu geri bildirim AI eğitim/ayar veri setinin temelidir.
+
+---
+
+# 12. CANLI GÖRÜNTÜ VE KAYIT — DÜRÜST ÇÖZÜM
+
+Ek donanım olmadan bulut üzerinden canlı yayın **veremiyoruz**. Uydurma bir çözüm
+sunmak yerine akışı şöyle kuruyoruz:
+
+- **Alarm anı görüntüsü** uygulamada anında görünür (e-posta eki).
+- **Canlı izleme** için uygulama, Dahua'nın kendi **DMSS** uygulamasına deep-link eder.
+  Müşteri DMSS'i zaten kuruyor; P2P ile CGNAT arkasından çalışır.
+- **Olay kaydı** DVR'ın diskinde durur. Uygulama alarmın tam zaman damgasını ve kanalını
+  gösterir; kullanıcı DMSS playback'te o saniyeye gider. Kurulum sırasında bu akış
+  müşteriye gösterilir.
+- Tier B açılırsa (§18) canlı görüntü ve 30 sn klip Nightshift içine taşınır.
+
+Bu, ürünün en zayıf noktası ve satışta böyle anlatılmalı: **Nightshift alarm ve kanıt
+üretir; canlı izleme DVR'ın kendi uygulamasındadır.**
+
+---
+
+# 13. SAĞLIK İZLEME
+
+Ek cihaz olmadığı için sağlık bilgisi de DVR'ın gönderdikleriyle sınırlı:
+
+| Sinyal | Kaynak |
+|--------|--------|
+| DVR çevrimdışı / internet kesik | Beklenen periyodik e-posta gelmedi (watchdog) |
+| Kanal görüntü kaybı | `video loss` alarm e-postası |
+| Kamera kapatıldı/çevrildi | `video tampering` alarm e-postası |
+| Disk yok / hata / dolu | anomaly alarm e-postası |
+| Kayıt gerçekten yapılıyor mu | **UNKNOWN** — uzaktan doğrulanamaz |
+
+Watchdog kuralı: DVR'da periyodik test/health e-postası açılır (örn. 6 saatte bir).
+`son_eposta + 1.5 × periyot` aşılırsa site `SILENT` durumuna geçer ve uyarı üretilir.
+
+**Bastırma hiyerarşisi:** site sessizse tek alarm üretilir, kanal alarmları bastırılır.
+
+`RECORDING_OK` gibi doğrulanamayan bir durum asla raporlanmaz.
+
+---
+
+# 14. MULTI-TENANCY, RBAC, KİMLİK
+
+Değişmedi:
+
+- Hiyerarşi: Tenant → Sites → Devices → Cameras; Users, Roles, Subscription, Audit Logs.
+- Her business tablosu `tenant_id`; PostgreSQL RLS + servis katmanında zorunlu filtre.
+- Roller: `OWNER`, `ADMIN`, `SECURITY_MANAGER`, `SITE_MANAGER`, `SUPERVISOR`, `GUARD`,
+  `VIEWER`, `BILLING_ADMIN`.
+- Kimlik: e-posta/parola, Argon2id, kısa ömürlü access JWT, refresh token rotasyonu,
+  push token yönetimi, opsiyonel TOTP iskeleti.
+- Cihaz kimliği artık makine token'ı değil, **ingest adresi**dir (§7.1) — tek kullanımlık
+  enrollment akışı buna göre sadeleşir.
+
+---
+
+# 15. VERİ MODELİ DEĞİŞİKLİKLERİ
+
+Kaldırılan: `edge_gateways`, `edge_commands`, `edge_command_results`.
+
+Eklenen:
+
+```
+device_ingest_addresses   (device_id, address, secret_rotated_at, active)
+email_messages            (id, device_id, message_id, sender_ip, received_at, raw_headers,
+                           parse_status, parse_profile_id)
+email_samples             (device_id, firmware, raw_email, captured_at)
+firmware_email_profiles   (model, firmware_pattern, field_regexes, verified_at)
+device_silence_state      (device_id, last_message_at, expected_interval_s, state)
+```
+
+Korunan: `tenants`, `subscriptions`, `users`, `roles`, `sites`, `devices`,
+`device_capabilities`, `cameras`, `camera_zones`, `camera_ai_profiles`, `rules`,
+`events`, `event_detections`, `alarms`, `alarm_deliveries`, `alarm_acknowledgements`,
+`alarm_resolutions`, `media_assets`, `push_devices`, `ai_jobs`, `ai_results`,
+`health_checks`, `audit_logs`, `usage_counters`.
+
+`events` tablosuna eklenecek: `source` (`email` | `tunnel`), `source_message_id`.
+
+---
+
+# 16. API DEĞİŞİKLİKLERİ
+
+Kaldırılan: `/internal/edge/v1/*` ve `/v1/edges/*` (Tier B açılırsa geri gelir).
+
+Eklenen:
+
+```
+POST  /v1/devices/{id}/ingest-address        yeni adres üret / döndür
+GET   /v1/devices/{id}/email-samples         kurulum doğrulaması için ham örnekler
+POST  /v1/devices/{id}/test-alarm            beklenen test e-postasını doğrula
+GET   /v1/devices/{id}/silence-state         watchdog durumu
+```
+
+Korunan: auth, tenants, sites, devices, cameras, events, alarms, rules, analytics,
+billing, `/v1/realtime`.
+
+`POST /v1/cameras/{id}/live-sessions` V1'de `501 Not Implemented` döner ve DMSS
+yönlendirme bilgisini içerir — sessizce boş dönmez.
+
+---
+
+# 17. NEYDEN VAZGEÇTİK
+
+Açıkça ve eksiksiz:
+
+| Özellik | V1 durumu | Neden |
+|---------|-----------|-------|
+| Uygulama içi canlı izleme | **Yok** — DMSS'e yönlendirme | İçeri bağlantı gerektirir |
+| 30 sn olay klibi | **Yok** — kayıt DVR'da, zaman damgası verilir | Medya çıkışı yalnızca e-posta eki |
+| Uygulamadan DVR konfigürasyonu | **Yok** — kurulumda elle | Cihaza uzaktan erişim yok |
+| Otomatik kanal keşfi | **Yok** — kurulumda elle girilir | Aynı sebep |
+| Annotated snapshot indirme | Var (cloud AI üretir) | — |
+| Sub-8 sn push | **Hedef 30 sn** | E-posta gecikmesi (§22) |
+| Kayıt tazeliği doğrulama | **UNKNOWN** | Uzaktan okunamaz |
+| Sürekli AI (PPE, yangın/duman, crowd) | **Yok** | Sürekli video akışı gerektirir |
+| Loitering | Sınırlı | Perimeter kuralı varsa cihazdan, yoksa yok |
+| Offline olay kuyruğu | DVR'ın kendi kuyruğu | Edge spool yok |
+
+Bu listedeki her satır, ek donanımın gerçek bedelidir. Müşteriye Tier B teklif edilirken
+bu tablo kullanılır.
+
+---
+
+# 18. TIER B — OPSİYONEL TÜNEL MODU
+
+Sahada **yeni cihaz almadan** tam özellik seti mümkün olabilir; iki yol:
+
+**B1 — Mevcut router'da WireGuard/Tailscale.** MikroTik, OpenWrt ve birçok 4G router
+outbound VPN kurabilir. Cloud DVR'a LAN üzerinden erişir: canlı yayın, klip, uzaktan
+konfigürasyon, tam capability probe. Ek donanım yok, sadece router konfigürasyonu.
+
+**B2 — Dahua Auto Registration.** DVR datasheet'te destekliyor: cihaz dışarı bağlanır,
+bizim sunucumuz içeri erişir. Router konfigürasyonu bile gerekmez. Bedeli: Dahua NetSDK
+tabanlı bir kayıt sunucusu yazmak ve vendor SDK lisansını incelemek.
+
+Mevcut `edge-agent/` kodu **silinmiyor**: CGI istemcisi, olay ayrıştırıcı, snapshot,
+RTSP/playback ve probe Tier B'de aynen kullanılacak. Bugün kurulum aracı olarak
+(§5.5) zaten kullanılıyor.
+
+Tier B açık bir sitede `events.source = tunnel` olur ve §17 tablosundaki kayıplar geri gelir.
+
+---
+
+# 19. GÜVENLİK VE GİZLİLİK
+
+## 19.1 Ağ
+
+- DVR'a port yönlendirmesi yok, DDNS ile açma yok, UPnP kapalı.
+- Dahua kaydediciler internete açıldığında kitlesel taramanın hedefi olur; bu bir
+  tercih değil, yasak.
+- Cloud yalnızca TLS. Ingest MTA yalnızca TLS kabul eder.
+
+## 19.2 Sırlar
+
+- Ingest adresi sırdır; döndürülebilir.
+- DVR SMTP hesabı site başına ayrı ve yalnızca gönderim yetkili.
+- Servis hesabı parolası hiçbir logda görünmez (redaksiyon zorunlu).
+- Object storage private, presigned URL kısa ömürlü, public bucket yasak.
+
+## 19.3 Yüz verisi
+
+V1 yüz tanıma **ve** yüz tespiti yapmaz. Üç katmanlı garanti:
+
+1. **Cihaz:** `AI Mode = IVS&SMD` seçilir; yüz motoru donanımda çalışmaz (§2.2).
+2. **Ingest:** yüz olayı yine de gelirse edge/ingest tarafında düşürülür
+   (`BLOCKED_EVENT_CODES`), payload saklanmaz.
+3. **Ürün:** insan tespiti anonim nesne tespitidir; kimlik eşleştirme yapılmaz.
+
+Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı modül gerekir.
+
+## 19.4 Görüntü mahremiyeti
+
+- Kameralar komşu parsel ve kamusal alanı görmeyecek şekilde konumlandırılmalı;
+  kurulum raporuna yazılır.
+- Retention plan bazlı (7/30/90 gün), müşteriye gösterilir.
+- Sesli caydırıcı kayıt yapmaz; two-way talk V1'de kullanılmaz.
+
+## 19.5 Denetim
+
+`login`, `failed_login`, `user_invited`, `role_changed`, `device_added`,
+`ingest_address_rotated`, `alarm_acknowledged`, `alarm_resolved`, `rule_changed`,
+`subscription_changed` audit'lenir.
+
+---
+
+# 20. FAZLAR
+
+| Faz | Kapsam | Çıkış kriteri |
+|-----|--------|---------------|
+| **0** | Monorepo, docker compose, servis iskeletleri, lint/test | ✅ tamamlandı |
+| **1** | Dahua CGI probe (kurulum aracı) | ✅ tamamlandı — gerçek cihaz doğrulaması bekliyor |
+| **2** | Cihaz kurulumu: ingest adresi, MTA, ham e-posta yakalama | Gerçek DVR'dan gelen e-posta `email_samples`'a düşüyor |
+| **3** | E-posta ayrıştırıcı + firmware profili | Kanal, olay türü, zaman ve JPEG doğru çıkarılıyor |
+| **4** | Olay kaydı + snapshot storage + realtime | Kameranın önünden geçince uygulamada fotoğraflı olay görünüyor |
+| **5** | AI ikinci doğrulama | SMD olayı AI ile doğrulanıyor, annotated snapshot üretiliyor |
+| **6** | Zone + schedule + risk | Gece yasak alanda insan alarm üretiyor, normal alanda üretmiyor |
+| **7** | Push + alarm workflow + escalation | Olay → push → alarm detayı → ACK zinciri çalışıyor |
+| **8** | Sağlık: watchdog, video loss, tamper, disk, bastırma hiyerarşisi | İnternet kesintisi tek alarm üretiyor |
+| **9** | Caydırıcı kurulum paketi + DMSS deep link | Sahada ses çalıyor, uygulamadan DMSS açılıyor |
+| **10** | Multi-tenant sertleştirme + RBAC | Tenant A, tenant B verisine hiçbir endpointten erişemiyor |
+| **11** | Abonelik ve kullanım sayaçları | Plan limitleri gerçek fonksiyonları etkiliyor |
+| **12** | Analitik | Alarm/gün, yanıt süresi, doğru/yanlış pozitif |
+| **13** | Production hardening | Rate limit, yedek, DR, metrik, yük testi, mobil release |
+| **B** | Tier B tünel (opsiyonel) | Canlı görüntü ve klip Nightshift içinde |
+
+PHASE 1 gerçek cihazda doğrulanmadan PHASE 2'ye geçilmez.
+
+---
+
+# 21. TEST STRATEJİSİ
+
+**Unit:** e-posta ayrıştırıcı (kaydedilmiş gerçek e-postalarla), dedup, schedule
+değerlendirici, zone geometrisi, risk skoru, RBAC, Dahua olay ayrıştırıcı (mevcut).
+
+**Integration:** MTA → kuyruk → parser → event; AI → backend; medya yükleme; push
+soyutlaması; watchdog zamanlayıcı.
+
+**Donanım döngüsünde (gerçek DVR):** SMD human, SMD vehicle, perimeter tripwire,
+video loss (kablo çek), video tampering (lens kapat), disk çıkar, internet kes,
+DVR kapat, gece/gündüz aydınlatma farkı, yağmur/rüzgâr yanlış pozitifleri.
+
+**Mobil E2E:** login, push, deep link, ACK, DMSS yönlendirme.
+
+**Kritik regresyon:** yüz olayının hiçbir katmanda saklanmadığı testle sabitlenir.
+
+---
+
+# 22. PİLOT BAŞARI METRİKLERİ
+
+Bir haftalık gerçek şantiye testinde ölç:
+
+```
+insan olayı sayısı / doğrulanan / yanlış pozitif
+kaçırılan olay (kayıttan geriye bakarak)
+SMD → e-posta teslim gecikmesi (p50 / p95)
+e-posta → push gecikmesi (p50 / p95)
+uçtan uca gecikme (p50 / p95)
+snapshot eki gelme oranı
+caydırıcı ses sonrası ayrılma oranı (kayıttan gözlem)
+DVR sessizlik (watchdog) olayları
+aylık e-posta hacmi ve depolama
+```
+
+Hedefler:
+
+```
+SMD → push p95          < 30 sn
+snapshot eki geliş      > 95%
+yanlış pozitif / gece   < 3 / kamera / gece
+kritik olay kaybı       0 (DVR ve internet çalışırken)
+cross-tenant sızıntı    0
+```
+
+Eski spec'in 8 sn hedefi e-posta taşımasında gerçekçi değil; 30 sn ölçülerek
+doğrulanacak ve gerekirse Tier B gerekçesi olacak.
+
+---
+
+# 23. V1 TAMAMLANDI SAYILMA KOŞULLARI
+
+- 14 DVR eklenebiliyor, her biri kendi ingest adresiyle.
+- Kurulum kontrol listesi (§5) her cihaz için doldurulmuş.
+- İnsan olayı 30 sn içinde fotoğraflı push olarak telefona düşüyor.
+- Sahada sesli caydırıcı çalışıyor.
+- AI ikinci doğrulama çalışıyor; yanlış pozitif oranı ölçülüyor.
+- Zone ve schedule çalışıyor; risk skoru alarm seviyesini belirliyor.
+- ACK ve escalation çalışıyor.
+- Video loss, tampering, disk ve sessizlik alarmları çalışıyor, bastırma hiyerarşisi doğru.
+- Yüz verisi hiçbir katmanda saklanmıyor (testle kanıtlı).
+- Multi-tenant izolasyon testleri geçiyor; RBAC çalışıyor.
+- Android ve iOS build alınabiliyor; push deep-link çalışıyor.
+- Yedek/geri yükleme test edilmiş, monitoring panosu hazır.
+
+---
+
+# 24. CİHAZDA DOĞRULANACAKLAR
+
+Datasheet'in cevaplamadığı, ilk kurulumda **ölçülecek** sorular. Hiçbiri varsayılmayacak:
+
+1. `Alarm Server` menüsü hangi protokolü konuşuyor? HTTP POST kabul ediyorsa e-postanın
+   yerine geçer — mimarinin en değerli iyileştirmesi bu olur.
+2. Arayüzde FTP/SFTP yükleme var mı? Varsa video klip çıkışı mümkün olabilir.
+3. Alarm e-postasının tam gövde biçimi ve kaç JPEG eklendiği.
+4. Minimum "send interval" değeri ve alarm başına e-posta davranışı.
+5. `voice prompt` için desteklenen ses dosyası biçimi, süresi ve tetikleme gecikmesi.
+6. Periyodik health/test e-postası ayarı var mı, minimum periyodu ne?
+7. SMTP TLS modu (SSL 465 / STARTTLS 587) ve sertifika doğrulama davranışı.
+8. Perimeter protection 4 kanalda mı (General Model) yoksa 2'de mi (Advanced Model)?
+9. SMD Plus olay e-postası ile klasik motion e-postası ayırt edilebiliyor mu?
+10. Cihaz saati NTP ile senkron mu; e-postadaki zaman damgası hangi timezone'da?
+
+Bu sorular `scripts/dahua_probe.py` çıktısı + cihaz arayüzü ekran görüntüleriyle
+yanıtlanır ve §24 bu dokümanda cevaplarla güncellenir.
+
+---
+
+# 25. KAYNAKLAR
+
+1. DH-XVR5108HS-I3 datasheet (Rev 002.000, 2023-07-20) —
+   https://material.dahuasecurity.com/uploads/cpq/prm-os-srv-res/smart/datasheetzipfiles/XVR5108HS-I3_V3_datasheet_20230720.pdf
+2. Dahua XVR5108HS-I3 ürün sayfası —
+   https://www.dahuasecurity.com/uk/products/All-Products/HDCVI-Recorders/WizSense-Series/I3-Series/5M-N/1080P-Series/XVR5108HS-I3
+3. Önceki sürüm spesifikasyonu (edge gateway mimarisi) — `docs/legacy-siteguard-v1-spec.md`
+4. Dahua CGI/HTTP API notları ve olay kodları — `docs/dahua-integration.md`

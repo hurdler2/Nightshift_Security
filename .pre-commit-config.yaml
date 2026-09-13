@@ -1,0 +1,36 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: no-plaintext-xvr-credentials
+        name: no hard-coded XVR credentials
+        entry: python scripts/check_no_secrets.py
+        language: system
+        pass_filenames: true
+        types: [text]
+
+      - id: edge-tests
+        name: edge-agent tests (Dahua parser/contract)
+        entry: python -m pytest edge-agent/tests -q
+        language: system
+        pass_filenames: false
+        files: ^edge-agent/

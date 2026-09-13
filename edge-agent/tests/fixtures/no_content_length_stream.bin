@@ -1,0 +1,20 @@
+--myboundary
+Content-Type: text/plain
+
+Code=VideoMotion;action=Start;index=1;data={
+   "SmartMotionEnable" : false
+}
+--myboundary
+Content-Type: text/plain
+
+Code=VideoLoss;action=Start;index=5;data={
+   "Channel" : 5
+}
+--myboundary
+Content-Type: text/plain
+
+Code=StorageLowSpace;action=Start;index=0;data={
+   "Name" : "sda",
+   "SpaceLimit" : 10
+}
+--myboundary--

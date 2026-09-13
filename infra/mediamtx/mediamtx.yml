@@ -1,0 +1,62 @@
+# MediaMTX for on-demand live sessions (spec §23).
+#
+# Edge gateways PUBLISH to this gateway over an outbound connection; viewers consume
+# WebRTC/HLS through the cloud. No camera is published 24/7 and no XVR port is ever
+# exposed (spec §55).
+
+logLevel: info
+logDestinations: [stdout]
+
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 512
+
+# Publishing is authenticated; anonymous publish would let anyone inject a stream.
+authMethod: internal
+authInternalUsers:
+  - user: edge
+    pass: dev-edge-secret
+    ips: []
+    permissions:
+      - action: publish
+        path:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+        path:
+  # The cloud media service drives sessions through the control API.
+  - user: api
+    pass: dev-api-secret
+    ips: []
+    permissions:
+      - action: api
+
+rtsp: yes
+rtspTransports: [tcp]
+rtspAddress: :8554
+
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsAlwaysRemux: no
+
+webrtc: yes
+webrtcAddress: :8889
+
+api: yes
+apiAddress: :9997
+
+rtmp: no
+srt: no
+
+pathDefaults:
+  # Sessions are torn down when nobody is watching (spec §23: 60s idle).
+  runOnDemandCloseAfter: 60s
+  runOnDemandStartTimeout: 10s
+
+paths:
+  # Live paths are created dynamically as live/<tenant>/<camera-uuid>.
+  "~^live/.*$":
+    source: publisher
