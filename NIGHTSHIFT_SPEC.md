@@ -241,7 +241,8 @@ denmez. Kurulum ekibi için kontrol listesi:
 [ ] Kayıt planı 7/24 veya en az olay bazlı aktif
 [ ] HDD sağlıklı, kapasite retention hedefine uygun
 [ ] Router üzerinde DVR'a port yönlendirmesi YOK
-[ ] DVR internete çıkabiliyor (SMTP 465/587 açık)
+[ ] DVR internete çıkabiliyor: SMTP testi 587 ile geçti (yedek 465, 2525) — port 25 kullanılmaz
+[ ] DVR DNS ayarı çalışıyor (gerekirse sabit 1.1.1.1 / 8.8.8.8)
 ```
 
 ## 5.2 AI
@@ -317,32 +318,73 @@ Notlar:
 
 # 7. E-POSTA INGEST SÖZLEŞMESİ
 
-## 7.1 Adresleme = kimlik
+## 7.1 Kimlik = cihaz başına SMTP hesabı
 
-Her DVR için tekil ve tahmin edilemez bir alıcı adresi üretilir:
+DVR bir SMTP **istemcisidir**: bir sunucuya kullanıcı adı/parola ile bağlanıp mail
+gönderir. Bu sunucu biz oluruz. Böylece kimlik doğrulama gerçek olur:
 
 ```
-<rastgele-16-hex>@in.nightshift.<tld>        örn. a3f9c1d47b20e85f@in.nightshift.app
+DVR SMTP ayarı
+  Sunucu   : mail.nightshift.<tld>
+  Port     : 587 (STARTTLS)  ·  yedek 465 (implicit TLS)  ·  yedek 2525
+  Kullanıcı: dev-<device-uuid>          ← cihaza özel, yalnızca bu cihaz
+  Parola   : <rastgele 32 karakter>     ← cihaza özel
+  Alıcı    : alarm@in.nightshift.<tld>  ← sabit, sır değil
 ```
 
-Bu adres aynı zamanda paylaşılan sırdır: hangi tenant/site/cihaz olduğunu belirler.
-Sızarsa tek komutla döndürülür (rotate) ve DVR'da güncellenir.
+Kural:
+
+- Her DVR'ın **kendi SMTP hesabı** vardır. Hesap yalnızca gönderim yetkilidir, yalnızca
+  tek alıcıya gönderebilir, hız limitlidir.
+- Cihaz kimliği **SMTP AUTH kullanıcı adından** çözülür; e-posta gövdesindeki cihaz
+  adından değil. Gövde ayrıştırılamasa bile olayın hangi cihazdan geldiği kesindir.
+- Bir hesap sızarsa yalnızca o cihazın alarmları taklit edilebilir; hesap tek komutla
+  döndürülür ve DoLynk Care üzerinden DVR'daki ayar uzaktan güncellenir (§2.4).
+- Alıcı adresi tekil olmak zorunda değildir; istenirse cihaz başına alt-adres
+  (`alarm+<device-uuid>@…`) yönlendirme kolaylığı için kullanılır — ama **kimlik
+  doğrulama işini adres değil, SMTP AUTH yapar**.
 
 Alan adı ayrı tutulur (`in.` alt alanı) ki kurumsal e-posta trafiğiyle karışmasın.
 
 ## 7.2 Ingest hattı
 
 ```
-DVR ──SMTP/TLS──► kendi MTA'mız (Postfix/Haraka)
-                        │  (RFC5321 alıcıya göre yönlendirme)
-                        ▼
-                  ingest kuyruğu (RabbitMQ)
-                        ▼
-                  email_parser  →  event + media_asset
+DVR ──SMTP AUTH + TLS──► kendi MTA'mız (Postfix/Haraka)
+      (giden bağlantı,        │  auth kullanıcısı → device_id
+       NAT sorunu yok)        ▼
+                        ingest kuyruğu (RabbitMQ)
+                              ▼
+                        email_parser  →  event + media_asset
 ```
 
 Üçüncü parti posta kutusundan IMAP ile çekmek yerine **kendi MTA'mıza teslim** tercih
-edilir: gecikme düşer, spam filtresi araya girmez, gönderen IP'sini görürüz.
+edilir: gecikme düşer, spam filtresi araya girmez ve kimlik doğrulamayı biz yaparız.
+
+MTA **587, 465 ve 2525** portlarını birlikte dinler. Gerekçe §7.5.
+
+## 7.5 NAT, CGNAT ve operatör kısıtları
+
+NAT yalnızca **içeri** gelen bağlantıyı engeller. Bu mimaride sahadan içeri hiçbir
+bağlantı gelmez; DVR her şeyi kendisi başlatır. Cihazda DoLynk'in çalışıyor olması
+(§2.4) çıkışın açık olduğunun canlı kanıtıdır — DoLynk bağlanabiliyorsa SMTP de
+bağlanır.
+
+Gerçek riskler NAT değil, operatör filtreleridir:
+
+| Sorun | Belirti | Çözüm |
+|-------|---------|-------|
+| **Port 25 engeli** (neredeyse tüm mobil/4G operatörlerinde) | Test maili gitmiyor | Port 25 **hiç kullanılmaz**; 587 birincil, 465 yedek |
+| 587 de engelli (bazı kurumsal hatlar) | Aynı | MTA 2525'i de dinler |
+| Firmware TLS uyumsuzluğu | Bağlanıyor, auth sonrası kopuyor | MTA TLS 1.2 kabul eder, yaygın güvenilen sertifika (Let's Encrypt) kullanır |
+| DNS bozuk (4G router garip DNS dağıtıyor) | Sunucu adı çözülmüyor | DVR'a sabit DNS (1.1.1.1 / 8.8.8.8) girilir |
+| NTP engelli | Olay saatleri yanlış | Kurulum kontrolü (§5.1); saat kayması blocker |
+| Operatör şeffaf proxy'si | HTTP dışı protokoller bozuluyor | 465 (implicit TLS) denenir; çözülmezse o hat için Tier B |
+
+**Bant genişliği** bu tasarımda sorun değil: alarm başına ~150–300 KB (bir JPEG).
+Gecede 50 alarm ≈ 10 MB, ayda ≈ 300 MB/DVR. Kotalı 4G hatlarında bile rahat çalışır —
+sürekli video akışına göre iki büyüklük mertebesi az.
+
+**Statik IP gerekmez**, DDNS gerekmez, port yönlendirme gerekmez.
 
 ## 7.3 Ayrıştırma
 
@@ -360,7 +402,7 @@ E-posta gövdesinin birebir biçimi firmware'e göre değişir. **Biçim koda g�
 
 | Risk | Önlem |
 |------|-------|
-| Sahte alarm enjeksiyonu | Adres = sır; gönderen IP'si sitenin bilinen IP'siyle karşılaştırılır; hız limiti; anormallik uyarısı |
+| Sahte alarm enjeksiyonu | **SMTP AUTH** (cihaz başına hesap, §7.1); hesap başına hız limiti; tek alıcıya kısıt. Gönderen IP'si CGNAT altında paylaşımlı ve değişken olduğu için **kimlik doğrulamada kullanılmaz** — yalnızca zayıf anomali sinyali |
 | Gecikme | Kendi MTA'mız, üçüncü parti kutu yok; gecikme ölçülür ve metriklenir (§22) |
 | E-posta hiç gelmiyor | Sağlık watchdog (§13): beklenen periyodik e-posta gelmezse site "sessiz" alarmı |
 | Aynı olay için onlarca e-posta | DVR send interval + cloud dedup (§8.2) |
@@ -599,8 +641,8 @@ Değişmedi:
   `VIEWER`, `BILLING_ADMIN`.
 - Kimlik: e-posta/parola, Argon2id, kısa ömürlü access JWT, refresh token rotasyonu,
   push token yönetimi, opsiyonel TOTP iskeleti.
-- Cihaz kimliği artık makine token'ı değil, **ingest adresi**dir (§7.1) — tek kullanımlık
-  enrollment akışı buna göre sadeleşir.
+- Cihaz kimliği artık makine token'ı değil, **cihaza özel SMTP hesabıdır** (§7.1);
+  enrollment akışı bu hesabın üretilmesi ve DVR'a girilmesinden ibarettir.
 
 ---
 
@@ -611,9 +653,10 @@ Kaldırılan: `edge_gateways`, `edge_commands`, `edge_command_results`.
 Eklenen:
 
 ```
-device_ingest_addresses   (device_id, address, secret_rotated_at, active)
-email_messages            (id, device_id, message_id, sender_ip, received_at, raw_headers,
-                           parse_status, parse_profile_id)
+device_smtp_accounts      (device_id, username, password_hash, recipient, rate_limit,
+                           rotated_at, active)
+email_messages            (id, device_id, smtp_auth_user, message_id, sender_ip,
+                           received_at, raw_headers, parse_status, parse_profile_id)
 email_samples             (device_id, firmware, raw_email, captured_at)
 firmware_email_profiles   (model, firmware_pattern, field_regexes, verified_at)
 device_silence_state      (device_id, last_message_at, expected_interval_s, state)
@@ -636,7 +679,7 @@ Kaldırılan: `/internal/edge/v1/*` ve `/v1/edges/*` (Tier B açılırsa geri ge
 Eklenen:
 
 ```
-POST  /v1/devices/{id}/ingest-address        yeni adres üret / döndür
+POST  /v1/devices/{id}/smtp-account          hesap üret / parolayı döndür (rotate)
 GET   /v1/devices/{id}/email-samples         kurulum doğrulaması için ham örnekler
 POST  /v1/devices/{id}/test-alarm            beklenen test e-postasını doğrula
 GET   /v1/devices/{id}/silence-state         watchdog durumu
@@ -729,7 +772,7 @@ Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı 
 ## 19.5 Denetim
 
 `login`, `failed_login`, `user_invited`, `role_changed`, `device_added`,
-`ingest_address_rotated`, `alarm_acknowledged`, `alarm_resolved`, `rule_changed`,
+`smtp_account_rotated`, `alarm_acknowledged`, `alarm_resolved`, `rule_changed`,
 `subscription_changed` audit'lenir.
 
 ---
@@ -838,7 +881,10 @@ Datasheet'in cevaplamadığı, ilk kurulumda **ölçülecek** sorular. Hiçbiri 
 4. Minimum "send interval" değeri ve alarm başına e-posta davranışı.
 5. `voice prompt` için desteklenen ses dosyası biçimi, süresi ve tetikleme gecikmesi.
 6. Periyodik health/test e-postası ayarı var mı, minimum periyodu ne?
-7. SMTP TLS modu (SSL 465 / STARTTLS 587) ve sertifika doğrulama davranışı.
+7. SMTP TLS modu (SSL 465 / STARTTLS 587) ve sertifika doğrulama davranışı; firmware
+   hangi TLS sürümlerini kabul ediyor?
+7b. E-posta konusu (subject/title) alanı özelleştirilebiliyor mu? Mümkünse cihaz kimliği
+   oraya da yazılır (SMTP AUTH'a ek ikinci sinyal).
 8. Perimeter protection 4 kanalda mı (General Model) yoksa 2'de mi (Advanced Model)?
 9. SMD Plus olay e-postası ile klasik motion e-postası ayırt edilebiliyor mu?
 10. Cihaz saati NTP ile senkron mu; e-postadaki zaman damgası hangi timezone'da?
