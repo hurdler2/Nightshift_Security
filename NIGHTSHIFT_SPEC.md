@@ -861,8 +861,8 @@ Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı 
 |-----|--------|---------------|
 | **0** | Monorepo, docker compose, servis iskeletleri, lint/test | ✅ tamamlandı |
 | **1** | Dahua CGI probe (kurulum aracı) | ✅ tamamlandı — gerçek cihaz doğrulaması bekliyor |
-| **2** | Cihaz kurulumu: ingest adresi, MTA, ham e-posta yakalama | Gerçek DVR'dan gelen e-posta `email_samples`'a düşüyor |
-| **3** | E-posta ayrıştırıcı + firmware profili | Kanal, olay türü, zaman ve JPEG doğru çıkarılıyor |
+| **2** | Kimlik doğrulamalı SMTP endpoint, MIME/medya ayıklama, profil motoru, ham e-posta yakalama | ✅ kod tamam — gerçek DVR'dan gelen e-posta bekleniyor |
+| **3** | Provisional profili gerçek e-postayla değiştir, `verified=True` yap | Kanal, olay türü, zaman ve JPEG gerçek cihazdan doğru çıkarılıyor |
 | **4** | Olay kaydı + snapshot storage + realtime | Kameranın önünden geçince uygulamada fotoğraflı olay görünüyor |
 | **5** | AI ikinci doğrulama | SMD olayı AI ile doğrulanıyor, annotated snapshot üretiliyor |
 | **6** | Zone + schedule + risk | Gece yasak alanda insan alarm üretiyor, normal alanda üretmiyor |

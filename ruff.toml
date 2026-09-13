@@ -18,6 +18,9 @@ ignore = [
 "**/playback.py" = ["S603", "S607"]
 "**/probe.py" = ["S603", "S607"]
 "**/ffprobe.py" = ["S603", "S607"]
+# Full-width colon in the mail-parsing patterns is intentional: some
+# firmware locales emit U+FF1A instead of ASCII colon.
+"**/ingest/profiles.py" = ["RUF001"]
 
 [lint.isort]
 known-first-party = ["app", "nightshift_edge", "tests"]

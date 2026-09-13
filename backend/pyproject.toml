@@ -22,6 +22,7 @@ dependencies = [
   "structlog>=24.1",
   "boto3>=1.34",
   "aio-pika>=9.4",
+  "aiosmtpd>=1.4.6",
 ]
 
 [project.optional-dependencies]
