@@ -163,7 +163,7 @@ Gelen her olay satır satır ekrana düşer:
  Nightshift Dahua probe — 192.168.1.108
 ====================================================================
  model            : XVR5108HS-I3
- firmware         : 4.001.0000000.x
+ firmware         : 4.004.0000001.0.R.250929
  serial           : 7L03CE2PAZ1B4F5
  channels         : 8
 

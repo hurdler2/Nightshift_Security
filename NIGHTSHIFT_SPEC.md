@@ -5,6 +5,7 @@
 > caydırıcı devreye girsin, telefona fotoğraflı alarm düşsün.
 >
 > **Pilot donanım:** Dahua **DH-XVR5108HS-I3/T**, 8 analog kanal, WizSense.
+> Firmware: **4.004.0000001.0.R.250929** (29 Eylül 2025 release, cihazın en güncel sürümü).
 >
 > **Tarih:** 2026-09-13 · **Sürüm:** V1 (zero-device)
 >
@@ -107,6 +108,28 @@ bulutuna outbound bağlanabildiğinin kanıtıdır ve iki sonucu vardır:
    kolaylık; kurulum sonrası ayar değişiklikleri için §5 akışına alternatif olur.
 
 **Ama DoLynk üzerine ürün kurulmayacak** — gerekçe §3.1.
+
+## 2.4b Firmware taban çizgisi
+
+Pilot cihazın firmware'i **4.004.0000001.0.R.250929** ve DMSS "en güncel sürüm" diyor.
+Bunun üç pratik sonucu var:
+
+1. **Modern taban çizgisi.** 4.004 + 2025 sonu build demek: eski firmware tuzaklarının
+   (eksik `getExposureEvents`, tuhaf digest davranışı, 0 tabanlı snapshot kanalı,
+   TLS'siz SMTP) görülme olasılığı düşük. Yine de probe doğrulayacak — varsayım değil.
+2. **Sabit hedef.** `R` release build ve en güncel sürüm olduğu için pilot boyunca
+   altımızdan davranış değişmez. E-posta ayrıştırma profili (`firmware_email_profiles`)
+   bu sürüme sabitlenir.
+3. **Sıkılaştırılmış güvenlik varsayılanları.** Yeni Dahua firmware'leri parola
+   karmaşıklığı dayatır, hesap kilitleme uygular ve bazı erişimleri (CGI/özel protokol,
+   ONVIF) açıkça etkinleştirmeyi ister. Servis hesabı oluştururken ve probe'un yeniden
+   deneme davranışında bu hesaba katılmalı (§24.13–15).
+
+**Filo envanteri:** 14 cihazın firmware'i aynı olmayabilir; farklı tarihlerde alınmış
+cihazlar 4.001/4.002 taban çizgisinde olabilir ve e-posta gövdesi farklı olabilir.
+DMSS/DoLynk Care her cihazın sürümünü uzaktan gösterdiği için **sahaya gitmeden
+envanter çıkarılabilir**; bu PHASE 2'nin ilk işidir. Aynı sürümdeyse tek profil yeter,
+değilse sürüm başına profil gerekir.
 
 ## 2.5 Fiziksel portlar
 
@@ -891,6 +914,12 @@ Datasheet'in cevaplamadığı, ilk kurulumda **ölçülecek** sorular. Hiçbiri 
 11. DoLynk Care ile uzaktan alarm/e-posta/AI ayarı değiştirilebiliyor mu? (14 cihazın
     bakımı buna bağlı — §2.4)
 12. Test e-postası periyodu 30-60 dakikaya indirilebiliyor mu? (§13.1 hırsızlık tespiti)
+13. Yeni firmware'de CGI / özel protokol erişimi ayrıca etkinleştirilmeyi gerektiriyor mu?
+14. Hesap kilitleme politikası nedir (kaç hatalı denemede, ne kadar süre)? Probe ve
+    event stream yeniden deneme aralıkları buna göre ayarlanır.
+15. Servis hesabı için parola karmaşıklık kuralı nedir?
+16. Filo envanteri: 14 cihazın model + firmware listesi (DMSS/DoLynk Care üzerinden,
+    sahaya gitmeden) — kaç farklı e-posta profili gerekecek?
 
 Bu sorular `scripts/dahua_probe.py` çıktısı + cihaz arayüzü ekran görüntüleriyle
 yanıtlanır ve §24 bu dokümanda cevaplarla güncellenir.
