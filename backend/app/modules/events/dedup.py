@@ -93,3 +93,12 @@ class DedupWindow:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+    def __bool__(self) -> bool:
+        """Always truthy.
+
+        Without this, `__len__` makes an empty window falsy, so the common
+        `dedup or DedupWindow()` default silently throws away the caller's window and
+        every duplicate becomes a fresh alarm. Found exactly that way.
+        """
+        return True
