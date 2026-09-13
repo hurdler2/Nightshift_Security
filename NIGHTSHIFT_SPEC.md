@@ -585,6 +585,13 @@ ai_confidence_below_threshold   -15
 0–29 INFO · 30–49 LOW · 50–69 MEDIUM · 70–84 HIGH · 85–100 CRITICAL
 ```
 
+**Kalibrasyon açık maddesi.** Bu ağırlıklarla amiral senaryo — gece + yasak bölge +
+insan — 65 puan, yani MEDIUM çıkıyor. HIGH'a ancak tekrarlı görüntü, kamera müdahalesi
+veya cihaz sessizliği eklenince ulaşıyor. Bu bilinçli bir muhafazakârlık (HIGH'ı
+biriken kanıta saklamak) ama bir alarm listesinde MEDIUM'un göz ardı edilme riski var.
+Karar pilot verisiyle verilecek: §22.2'deki yanlış pozitif ölçümü elde olmadan ağırlık
+oynamak körlemesine ayar olur.
+
 ---
 
 # 11. ALARM VE BİLDİRİM
@@ -863,11 +870,11 @@ Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı 
 | **1** | Dahua CGI probe (kurulum aracı) | ✅ tamamlandı — gerçek cihaz doğrulaması bekliyor |
 | **2** | Kimlik doğrulamalı SMTP endpoint, MIME/medya ayıklama, profil motoru, ham e-posta yakalama | ✅ kod tamam — gerçek DVR'dan gelen e-posta bekleniyor |
 | **3** | Provisional profili gerçek e-postayla değiştir, `verified=True` yap | Kanal, olay türü, zaman ve JPEG gerçek cihazdan doğru çıkarılıyor |
-| **4** | Olay kaydı + snapshot storage + realtime | Kameranın önünden geçince uygulamada fotoğraflı olay görünüyor |
+| **4** | Olay kaydı + snapshot storage + realtime (dedup ve yaşam döngüsü ✅ kod tamam) | Kameranın önünden geçince uygulamada fotoğraflı olay görünüyor |
 | **5** | AI ikinci doğrulama | SMD olayı AI ile doğrulanıyor, annotated snapshot üretiliyor |
-| **6** | Zone + schedule + risk | Gece yasak alanda insan alarm üretiyor, normal alanda üretmiyor |
-| **7** | Push + alarm workflow + escalation | Olay → push → alarm detayı → ACK zinciri çalışıyor |
-| **8** | Sağlık: watchdog, video loss, tamper, disk, bastırma hiyerarşisi | İnternet kesintisi tek alarm üretiyor |
+| **6** | Zone + schedule + risk + kural motoru | ✅ kod tamam — gece yasak alanda alarm üretiyor, normal alanda üretmiyor |
+| **7** | Push + alarm workflow + escalation (escalation, bastırma, push payload ✅ kod tamam) | Olay → push → alarm detayı → ACK zinciri çalışıyor |
+| **8** | Sağlık: watchdog, video loss, tamper, disk, bastırma hiyerarşisi (✅ kod tamam) | İnternet kesintisi tek alarm üretiyor |
 | **8b** | Filo yayılımı: 1 → 3 → 10 saha, konfigürasyon şablonu (§5.6) | 14 cihaz aynı şablonla kurulu ve olay üretiyor |
 | **9** | Caydırıcı kurulum paketi + DMSS deep link | Sahada ses çalıyor, uygulamadan DMSS açılıyor |
 | **10** | Multi-tenant sertleştirme + RBAC | Tenant A, tenant B verisine hiçbir endpointten erişemiyor |

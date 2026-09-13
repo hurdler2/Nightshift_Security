@@ -1,6 +1,18 @@
-"""events module - PHASE 4.
+"""Event ingestion, dedup and lifecycle (spec 8)."""
 
-Event ingestion, dedup and lifecycle (spec §13).
+from app.modules.events.dedup import DedupDecision, DedupWindow
+from app.modules.events.lifecycle import (
+    EventLifecycle,
+    EventStatus,
+    IllegalTransition,
+    ResolutionCode,
+)
 
-TODO(V1-BLOCKER): implement in PHASE 4 (router, schemas, service, models).
-"""
+__all__ = [
+    "DedupDecision",
+    "DedupWindow",
+    "EventLifecycle",
+    "EventStatus",
+    "IllegalTransition",
+    "ResolutionCode",
+]

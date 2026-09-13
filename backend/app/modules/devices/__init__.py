@@ -1,6 +1,10 @@
-"""devices module - PHASE 3.
+"""Device registry and health watchdog (spec 13)."""
 
-XVR registration, capability records, channel sync (spec §2.2).
+from app.modules.devices.watchdog import (
+    SilenceState,
+    WatchdogConfig,
+    WatchdogVerdict,
+    evaluate_silence,
+)
 
-TODO(V1-BLOCKER): implement in PHASE 3 (router, schemas, service, models).
-"""
+__all__ = ["SilenceState", "WatchdogConfig", "WatchdogVerdict", "evaluate_silence"]

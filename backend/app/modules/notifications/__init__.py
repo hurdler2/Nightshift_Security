@@ -1,6 +1,5 @@
-"""notifications module - PHASE 7.
+"""Push delivery (spec 11.1)."""
 
-FCM/APNs delivery with retry (spec §20).
+from app.modules.notifications.payload import PushPayload, UnsafePayload, build_push
 
-TODO(V1-BLOCKER): implement in PHASE 7 (router, schemas, service, models).
-"""
+__all__ = ["PushPayload", "UnsafePayload", "build_push"]
