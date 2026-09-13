@@ -98,6 +98,16 @@ Interoperability: ONVIF 22.12 (Profile T/S/G); CGI; SDK
 
 `SMTP`, `Alarm Server`, `P2P` ve `Auto Registration` bu mimarinin dayanak noktaları.
 
+**Sahada doğrulandı:** cihazın P2P menüsünde **DoLynk** aktif. Bu, DVR'ın Dahua
+bulutuna outbound bağlanabildiğinin kanıtıdır ve iki sonucu vardır:
+
+1. **DMSS ile canlı izleme çalışır** → §12'deki yönlendirme gerçekten uygulanabilir.
+2. **DoLynk Care ile uzaktan konfigürasyon çalışır** → 14 DVR'ın alarm, e-posta ve AI
+   ayarları sahaya gitmeden masadan değiştirilebilir. Bu operasyonel olarak büyük bir
+   kolaylık; kurulum sonrası ayar değişiklikleri için §5 akışına alternatif olur.
+
+**Ama DoLynk üzerine ürün kurulmayacak** — gerekçe §3.1.
+
 ## 2.5 Fiziksel portlar
 
 ```
@@ -140,6 +150,41 @@ bağlantılar dışında seçenek yoktur. Değerlendirilen yollar:
 
 E-posta modern bir entegrasyon yolu değil, ama bu kısıt kümesinde **çalışan tek
 datasheet-doğrulamalı yol** o. Zayıflıkları ve karşı önlemleri §7.4'te.
+
+## 3.1 Neden DoLynk / P2P üzerinden gitmiyoruz
+
+Cihazda DoLynk aktif ve Dahua bulutu alarmları zaten taşıyor. Cazip görünüyor, ama:
+
+- **Açık API yok.** Dahua'nın üçüncü taraf entegrasyon kapısı DEPP'tir
+  (kayıt + NDA + API lisans anahtarı) ve oradaki alarm abonelik API'leri **DSS
+  Professional** ile cihaz SDK'sı etrafında kurgulanmıştır. DoLynk tüketici/kurulumcu
+  bulutundan alarm çekmek için yayınlanmış bir API bulunmuyor.
+- **Rakibin bulutuna bağımlılık.** Ürünün kalbini kapalı bir vendor bulutuna bağlamak,
+  Dahua'nın bir sürümde davranışı değiştirmesiyle ürünü durdurabilir.
+- **Sözleşme riski.** Ticari bir SaaS'ı vendor'ın son kullanıcı bulutu üzerinden
+  çalıştırmak kullanım şartlarına takılabilir; hukuki inceleme olmadan yapılmaz.
+
+**Karar:** DoLynk operasyonel araç olarak kullanılır (canlı izleme yönlendirmesi,
+uzaktan ayar), veri hattı olarak kullanılmaz. DEPP üzerinden resmi ortaklık
+başvurusu §24'te değerlendirme maddesidir; olumlu sonuçlanırsa mimari yeniden gözden
+geçirilir.
+
+## 3.2 Ürün konumlandırması — DoLynk zaten alarm gönderiyorsa neden Nightshift?
+
+Bu sorunun net cevabı olmadan ürün satılmaz. DMSS/DoLynk Care ücretsiz olarak
+insan algılama bildirimi gönderiyor. Nightshift'in var oluş sebebi bunlar:
+
+| Nightshift | Dahua uygulaması |
+|---|---|
+| **Kanıt bulutta** — hırsız DVR'ı çalsa bile fotoğraf elimizde (§13.1) | Kanıt yalnızca çalınan diskte |
+| **AI ikinci doğrulama** — yanlış alarm azalır | Filtresiz bildirim; kullanıcı bildirimi susturur ve gerçek hırsızlığı kaçırır |
+| **Kural motoru** — bölge + saat + risk skoru | Kanal bazında aç/kapa |
+| **Escalation + ACK** — kim gördü, kaç saniyede onayladı | Sorumluluk zinciri yok |
+| **Çoklu şantiye / çoklu müşteri panosu, roller** | Cihaz listesi |
+| **Sesli caydırıcı iş akışı ve kurulum standardı** | Elle ayar |
+
+Bunların en güçlüsü ilki: şantiye hırsızları **kaydediciyi de götürür**. DVR gidince
+delil de gider. Bu tek başına ürünün gerekçesidir.
 
 ---
 
@@ -492,7 +537,36 @@ Bu, ürünün en zayıf noktası ve satışta böyle anlatılmalı: **Nightshift
 
 ---
 
-# 13. SAĞLIK İZLEME
+# 13. SAĞLIK İZLEME VE DVR HIRSIZLIĞI
+
+## 13.1 DVR çalınırsa
+
+Şantiye hırsızlığının klasik senaryosu: hırsız önce kaydediciyi alır, sonra rahatça
+çalışır. Bu durumda DVR'daki tüm kayıt gider.
+
+Nightshift'te olay zinciri şöyle işler ve **delil korunur**:
+
+```
+t+0    kamera insanı görür → SMD Plus → sesli caydırıcı çalar
+t+0    snapshot + kayıt DVR'a yazılır
+t+2-30 snapshot e-posta ile buluta çıkar   ◄── DVR sonradan çalınsa bile bu kayıp değil
+t+30   telefona fotoğraflı push
+...
+t+X    hırsız DVR'ı söker → cihaz sessizleşir
+t+X+   watchdog "site SILENT" alarmı üretir (§13.3)
+```
+
+Tasarım sonuçları:
+
+- Snapshot **DVR'dan silinemez**; buluta çıktığı anda tenant'ın arşivindedir.
+- Watchdog periyodu kısa tutulmalı: 6 saat, DVR sökülmesini fark etmek için çok uzun.
+  Kritik sitelerde test e-postası periyodu **30–60 dakikaya** çekilir.
+- `SILENT` durumu normal bir bakım uyarısı değil, **güvenlik olayıdır**: gece saatinde
+  gelirse risk skoru yükseltilir ve escalation zinciri başlatılır.
+- DVR'ı görecek bir kamera konumlandırmak kurulum tavsiyesidir (kaydedici dolabına
+  bakan kanal).
+
+## 13.2 İzlenebilenler
 
 Ek cihaz olmadığı için sağlık bilgisi de DVR'ın gönderdikleriyle sınırlı:
 
@@ -504,7 +578,9 @@ Ek cihaz olmadığı için sağlık bilgisi de DVR'ın gönderdikleriyle sınır
 | Disk yok / hata / dolu | anomaly alarm e-postası |
 | Kayıt gerçekten yapılıyor mu | **UNKNOWN** — uzaktan doğrulanamaz |
 
-Watchdog kuralı: DVR'da periyodik test/health e-postası açılır (örn. 6 saatte bir).
+## 13.3 Watchdog
+
+DVR'da periyodik test/health e-postası açılır (kritik sitelerde 30-60 dk, §13.1).
 `son_eposta + 1.5 × periyot` aşılırsa site `SILENT` durumuna geçer ve uyarı üretilir.
 
 **Bastırma hiyerarşisi:** site sessizse tek alarm üretilir, kanal alarmları bastırılır.
@@ -752,6 +828,9 @@ doğrulanacak ve gerekirse Tier B gerekçesi olacak.
 
 Datasheet'in cevaplamadığı, ilk kurulumda **ölçülecek** sorular. Hiçbiri varsayılmayacak:
 
+0. **DEPP ortaklık başvurusu** (https://depp.dahuasecurity.com) yapılsın mı? NDA
+   sonrası alarm abonelik API'sinin DoLynk P2P cihazlarını kapsayıp kapsamadigi
+   ogrenilir. Kapsiyorsa e-posta hatti yerine resmi API kullanilir (§3.1).
 1. `Alarm Server` menüsü hangi protokolü konuşuyor? HTTP POST kabul ediyorsa e-postanın
    yerine geçer — mimarinin en değerli iyileştirmesi bu olur.
 2. Arayüzde FTP/SFTP yükleme var mı? Varsa video klip çıkışı mümkün olabilir.
@@ -763,6 +842,9 @@ Datasheet'in cevaplamadığı, ilk kurulumda **ölçülecek** sorular. Hiçbiri 
 8. Perimeter protection 4 kanalda mı (General Model) yoksa 2'de mi (Advanced Model)?
 9. SMD Plus olay e-postası ile klasik motion e-postası ayırt edilebiliyor mu?
 10. Cihaz saati NTP ile senkron mu; e-postadaki zaman damgası hangi timezone'da?
+11. DoLynk Care ile uzaktan alarm/e-posta/AI ayarı değiştirilebiliyor mu? (14 cihazın
+    bakımı buna bağlı — §2.4)
+12. Test e-postası periyodu 30-60 dakikaya indirilebiliyor mu? (§13.1 hırsızlık tespiti)
 
 Bu sorular `scripts/dahua_probe.py` çıktısı + cihaz arayüzü ekran görüntüleriyle
 yanıtlanır ve §24 bu dokümanda cevaplarla güncellenir.
