@@ -299,6 +299,68 @@ async def recipients_for_site(
     return recipients
 
 
+async def recipients_for_role(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    role: str,
+    user_ids: Sequence[UUID] = (),
+    fallback_roles: Sequence[str] = (),
+) -> list[Recipient]:
+    """Phones belonging to one escalation step's audience (spec §12).
+
+    Named users win when a step lists them. Otherwise everyone holding the step's
+    role is notified — and if nobody holds it, the step falls through to the roles
+    above it rather than notifying nobody. A small customer with no SITE_MANAGER must
+    not have its escalation chain quietly dead-end at step two.
+    """
+    if user_ids:
+        return await _recipients_where(session, tenant_id, models.User.id.in_(list(user_ids)))
+
+    for candidate in (role, *fallback_roles):
+        found = await _recipients_where(session, tenant_id, models.User.role == candidate)
+        if found:
+            if candidate != role:
+                log.warning(
+                    "no %s holds a phone in tenant %s; escalated to %s instead",
+                    role,
+                    tenant_id,
+                    candidate,
+                )
+            return found
+
+    log.error("escalation step for role %s in tenant %s reached nobody", role, tenant_id)
+    return []
+
+
+async def _recipients_where(session: AsyncSession, tenant_id: UUID, clause) -> list[Recipient]:
+    rows = (
+        await session.execute(
+            select(models.PushDevice, models.User)
+            .join(models.User, models.User.id == models.PushDevice.user_id)
+            .where(
+                models.PushDevice.tenant_id == tenant_id,
+                models.User.is_active.is_(True),
+                clause,
+            )
+        )
+    ).all()
+
+    recipients: list[Recipient] = []
+    for device, user in rows:
+        try:
+            platform = Platform(device.platform.lower())
+        except ValueError:
+            log.warning("push device %s has unknown platform %r", device.id, device.platform)
+            continue
+        recipients.append(
+            Recipient(
+                user_id=user.id, token=device.token, platform=platform, device_id=device.id
+            )
+        )
+    return recipients
+
+
 __all__ = [
     "DeliveryResult",
     "DeliveryStatus",
@@ -309,6 +371,7 @@ __all__ = [
     "Recipient",
     "TokenUnregistered",
     "TransportError",
+    "recipients_for_role",
     "recipients_for_site",
     "send_with_retry",
 ]

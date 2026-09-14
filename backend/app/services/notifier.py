@@ -35,6 +35,11 @@ class PushNotifier:
         self._sessions = session_factory
         self._dispatcher = dispatcher
 
+    @property
+    def dispatcher(self) -> PushDispatcher:
+        """Shared with the escalation worker, so both use one transport wiring."""
+        return self._dispatcher
+
     async def __call__(self, intake: IntakeOutcome) -> DispatchReport | None:
         return await self.notify(intake)
 
