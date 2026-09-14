@@ -31,57 +31,86 @@ Portlar (hepsi `127.0.0.1` üzerine bağlıdır, dışarı açık değildir):
 | minio / konsol | 9000 / 9001 |
 | mediamtx rtsp / webrtc / hls / api | 8554 / 8889 / 8888 / 9997 |
 
-## Edge gateway (saha kurulumu)
+## Süreçler
 
-Minimum donanım (§10): x86-64 mini PC, 4 çekirdek, 8 GB RAM, 128 GB SSD, 1 Gbit
-Ethernet, Ubuntu Server 24.04 LTS.
+V1'de sahada cihaz yok; her şey buluttadır (§3). Dört ayrı süreç çalışır ve ayrı
+olmaları bilinçlidir — alarm postası seli, nöbetçinin alarm onaylamasını
+yavaşlatmamalıdır.
+
+| Süreç | Komut | Ne yapar |
+|-------|-------|----------|
+| API | `uvicorn app.main:app` | REST + WebSocket |
+| Mail ingest | `python -m app.workers.mail_ingest` | Kaydedicilerin gönderdiği alarm postasını kabul eder |
+| Watchdog | `python -m app.workers.watchdog` | Susan kaydediciyi fark eder (§13.3) |
+| Escalation | `python -m app.workers.escalation` | Yanıtlanmayan alarmı yükseltir (§12) |
+
+Hepsi aynı imajı kullanır:
 
 ```bash
-# 1. Bağımlılıklar
-sudo apt update && sudo apt install -y python3.12-venv ffmpeg
-
-# 2. Kurulum
-sudo useradd --system --home /var/lib/nightshift-edge --create-home nightshift
-sudo -u nightshift python3 -m venv /var/lib/nightshift-edge/.venv
-sudo -u nightshift /var/lib/nightshift-edge/.venv/bin/pip install /opt/nightshift/edge-agent
-
-# 3. Şifreleme anahtarı (çıktıyı systemd unit dosyasına koyun, diske düz yazmayın)
-/var/lib/nightshift-edge/.venv/bin/nightshift-edge secrets generate-key
-
-# 4. XVR credential bilgisini yerel şifreli depoya yaz (parola sorulur)
-sudo -u nightshift EDGE_SECRET_KEY=... \
-  /var/lib/nightshift-edge/.venv/bin/nightshift-edge secrets set xvr-01 nightshift
+docker compose -f infra/docker-compose.yml up -d \
+  backend mail-ingest watchdog escalation
 ```
 
-systemd unit (özet):
+## Mail ingest — dışarıya bakan tek yüzey
 
-```ini
-[Service]
-User=nightshift
-Environment=EDGE_CLOUD_URL=https://api.example.com
-Environment=EDGE_DATA_DIR=/var/lib/nightshift-edge
-EnvironmentFile=/etc/nightshift/edge.secret     # EDGE_SECRET_KEY, 0600, root:nightshift
-ExecStart=/var/lib/nightshift-edge/.venv/bin/nightshift-edge run
-Restart=always
-RestartSec=5
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/var/lib/nightshift-edge
+Kaydediciler SMTP **istemcisidir**; biz onların sunucusuyuz. Cihaz kimliği mesajın
+içinden değil `AUTH`'tan gelir, çünkü saha CGNAT arkasındadır ve gönderen IP hiçbir
+şey ispat etmez (§7.5).
+
+| Port | Kullanım |
+|------|----------|
+| 587 | Birincil, STARTTLS |
+| 465 | Implicit TLS, 587 engelliyse |
+| 2525 | Son çare, ikisi de engelliyse |
+| ~~25~~ | **Asla.** Mobil operatörler engeller. |
+
+Production'da TLS zorunludur; sertifika verilmezse süreç başlamayı reddeder:
+
+```
+SMTP_TLS_CERT_FILE=/etc/nightshift/tls/fullchain.pem
+SMTP_TLS_KEY_FILE=/etc/nightshift/tls/privkey.pem
+SMTP_PORT=587
 ```
 
-Ağ kuralları:
+DNS tarafı: ingest alan adının A kaydı bu sunucuya bakmalı. MX kaydına gerek yoktur —
+cihazlar adrese değil, **verilen sunucu adına** bağlanır.
 
-- XVR yalnızca LAN üzerinde; router üzerinde XVR'a port yönlendirmesi **yok**.
-- Gateway dışarı 443 (HTTPS/WSS) açar, içeri hiçbir port dinlemez.
-- Opsiyonel WireGuard tüneli de outbound kurulur.
-- Tailscale yalnızca pilot içindir; SaaS zorunlu bağımlılığı yapılmaz.
+Kimlik bilgisi anlık görüntüsü dakikada bir tazelenir (`SMTP_ACCOUNT_REFRESH_SECONDS`).
+Bunun sonucu açıkça söylenir: yeni açılan hesap bir tazeleme kadar geç çalışır,
+pasifleştirilen hesap da bir tazeleme kadar geç kapanır.
 
-## Production kontrol listesi (PHASE 15)
+## Push sağlayıcıları
+
+Yoksa sistem çalışmaya devam eder ve bunu loglar — alarm satırları yazılır, açık
+uygulamalar canlı kanaldan görür, yalnızca telefon çalmaz.
+
+```
+FCM_SERVICE_ACCOUNT_FILE=/etc/nightshift/fcm.json
+APNS_KEY_FILE=/etc/nightshift/apns.p8
+APNS_KEY_ID=...
+APNS_TEAM_ID=...
+APNS_TOPIC=com.nightshift.app
+```
+
+## Ağ kuralları
+
+- Şantiyedeki DVR'a router üzerinden **port yönlendirmesi yok**. Tüm trafik
+  cihazdan dışarı doğru kurulur.
+- Bulut tarafında dışarı açık olanlar: 443 (API/WS) ve SMTP portu. Başka hiçbir şey.
+- Canlı görüntü için içeri açılan port yoktur; V1'de canlı izleme DMSS'e
+  devredilir (§17).
+
+## Saha kurulumu
+
+Cihaz tarafı adım adım: [commissioning-runbook.md](commissioning-runbook.md).
+
+## Production kontrol listesi
 
 - [ ] TLS terminasyonu (Caddy/Traefik/Nginx) ve HSTS
 - [ ] `JWT_SECRET` en az 32 karakter, secret manager üzerinden
+      (production'da kısa veya varsayılan secret ile süreç başlamaz)
+- [ ] SMTP sertifikası kurulu; `SMTP_REQUIRE_TLS` açık
+- [ ] FCM/APNs kimlik bilgileri yerinde — yoksa alarm telefona ulaşmaz
 - [ ] PostgreSQL yedeği ve geri yükleme tatbikatı
 - [ ] Object storage yaşam döngüsü kuralları (plan bazlı retention, §25)
 - [ ] Prometheus + Grafana + alerting

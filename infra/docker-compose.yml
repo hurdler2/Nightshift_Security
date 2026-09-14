@@ -92,7 +92,7 @@ services:
   backend:
     build:
       context: ../backend
-    environment:
+    environment: &backend-env
       APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://nightshift:nightshift@postgres:5432/nightshift
       REDIS_URL: redis://redis:6379/0
@@ -113,6 +113,50 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
+
+  # The recorders' mail server (spec §7). A separate process from the API on
+  # purpose: a burst of alarm mail must not slow down a guard acknowledging an alarm.
+  # Development binds 2525; production listens on 587 with STARTTLS and never on 25,
+  # which mobile operators block.
+  mail-ingest:
+    build:
+      context: ../backend
+    command: ["python", "-m", "app.workers.mail_ingest"]
+    environment:
+      <<: *backend-env
+      SMTP_PORT: "2525"
+      SMTP_REQUIRE_TLS: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    ports:
+      - "127.0.0.1:2525:2525"
+
+  # Notices a recorder that stopped reporting (spec §13.3). This is the process that
+  # turns "the thief unplugged the box" from silence into an alarm.
+  watchdog:
+    build:
+      context: ../backend
+    command: ["python", "-m", "app.workers.watchdog"]
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Makes an unanswered alarm louder (spec §12). Without push credentials it exits
+  # immediately and says why, rather than pretending to escalate.
+  escalation:
+    build:
+      context: ../backend
+    command: ["python", "-m", "app.workers.escalation"]
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   ai-service:
     build:

@@ -18,6 +18,7 @@ from app import __version__
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, request_id_var
 from app.modules.alarms.router import alarms_router, events_router
+from app.modules.analytics.router import router as analytics_router
 from app.modules.auth.router import router as auth_router
 from app.modules.realtime.router import router as realtime_router
 from app.modules.sites.router import (
@@ -93,7 +94,8 @@ app.include_router(devices_router)
 app.include_router(cameras_router)
 app.include_router(rules_router)
 app.include_router(push_router)
+app.include_router(analytics_router)
 
 # Still to mount, by phase (spec §16, §20):
-#   analytics, billing
+#   billing
 # TODO(V1-BLOCKER): mount each module router in its phase; keep OpenAPI in sync.

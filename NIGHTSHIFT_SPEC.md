@@ -796,7 +796,17 @@ POST  /v1/alarms/{id}/acknowledge            POST /v1/alarms/{id}/resolve
 GET   /v1/rules  POST /v1/rules  PATCH /v1/rules/{id}  DELETE /v1/rules/{id}
 POST  /v1/push-devices                       DELETE /v1/push-devices/{id}
 WS    /v1/realtime                           access token ile, tenant kapsamlı
+GET   /v1/devices/{id}/email-samples         ham örnekler (profil çıkarmak için)
+POST  /v1/devices/{id}/test-alarm            test alarmı geldi mi / anlaşıldı mı
+GET   /v1/devices/{id}/silence-state         watchdog durumu, okundukça hesaplanır
+GET   /v1/analytics/summary                  pilot metrikleri (§22.2)
+GET   /v1/analytics/daily                    günlük trend
 ```
+
+Boş bir pencerede oranlar `0.0` değil `null` döner: sıfır "kusursuz" diye okunur,
+`null` "hiçbir şey olmadı" diye. Yanlış pozitif oranı yalnızca **kapatılmış**
+alarmlar üzerinden hesaplanır — kapatılmayanları doğru saymak, tam da insanlar
+alarm kapatmayı bıraktığında sayıyı güzelleştirirdi.
 
 `/v1/realtime`: WebSocket el sıkışması erişim token'ı ile yapılır (tarayıcı başlık
 gönderemediği için query parametresi de kabul edilir; refresh token kabul **edilmez**).
@@ -910,7 +920,7 @@ Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı 
 | **9** | Caydırıcı kurulum paketi + DMSS deep link | Sahada ses çalıyor, uygulamadan DMSS açılıyor |
 | **10** | Multi-tenant sertleştirme + RBAC | ✅ kod tamam — tenant kapsamı yalnızca token'dan gelir, yabancı kayıt 404 döner; REST ve WebSocket için testlerle kanıtlı |
 | **11** | Abonelik ve kullanım sayaçları | Plan limitleri gerçek fonksiyonları etkiliyor |
-| **12** | Analitik | Alarm/gün, yanıt süresi, doğru/yanlış pozitif |
+| **12** | Analitik | ✅ kod tamam — `/v1/analytics/summary` §22.2 pilot metriklerini üretiyor; ölçülemeyen üç metrik (kaçırılan olay, caydırıcı sonrası ayrılma, SMD→e-posta gecikmesi) `not_measurable` altında gerekçesiyle **adıyla** dönüyor, sessizce atlanmıyor |
 | **13** | Production hardening | Rate limit, yedek, DR, metrik, yük testi, mobil release |
 | **B** | Tier B tünel (opsiyonel) | Canlı görüntü ve klip Nightshift içinde |
 
