@@ -36,6 +36,27 @@ class Settings(BaseSettings):
     s3_use_path_style: bool = True
     s3_presign_ttl_seconds: int = 300
 
+    # SMTP ingest (spec §7.5). Port 25 is never offered: mobile operators block it,
+    # and an unauthenticated port would accept mail we cannot attribute to a device.
+    smtp_host: str = "0.0.0.0"  # noqa: S104 - the MTA must accept from the internet
+    smtp_port: int = 587
+    smtp_implicit_tls_port: int = 465
+    smtp_fallback_port: int = 2525
+    smtp_tls_cert_file: str | None = None
+    smtp_tls_key_file: str | None = None
+    #: Seconds between reloads of the device credential snapshot.
+    smtp_account_refresh_seconds: int = 60
+    smtp_require_tls: bool = True
+
+    # Push providers (spec §11.1). Absent in development: the pipeline runs without
+    # them and says so rather than pretending a notification was sent.
+    fcm_service_account_file: str | None = None
+    apns_key_file: str | None = None
+    apns_key_id: str | None = None
+    apns_team_id: str | None = None
+    apns_topic: str = "com.nightshift.app"
+    apns_use_sandbox: bool = False
+
     ai_service_url: str = "http://localhost:8100"
     media_gateway_url: str = "http://localhost:9997"
     billing_provider: str = "noop"

@@ -17,6 +17,16 @@ from fastapi.responses import JSONResponse
 from app import __version__
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, request_id_var
+from app.modules.alarms.router import alarms_router, events_router
+from app.modules.auth.router import router as auth_router
+from app.modules.realtime.router import router as realtime_router
+from app.modules.sites.router import (
+    cameras_router,
+    devices_router,
+    push_router,
+    rules_router,
+    sites_router,
+)
 
 settings: Settings = get_settings()
 
@@ -74,14 +84,16 @@ async def readiness() -> JSONResponse:
 
 
 app.include_router(health)
+app.include_router(auth_router)
+app.include_router(events_router)
+app.include_router(alarms_router)
+app.include_router(realtime_router)
+app.include_router(sites_router)
+app.include_router(devices_router)
+app.include_router(cameras_router)
+app.include_router(rules_router)
+app.include_router(push_router)
 
-# Phase-owned routers, mounted as they are implemented (spec §38, §52):
-#   PHASE 2  edges          -> /v1/edges,    /internal/edge/v1/*
-#   PHASE 3  sites/devices/cameras
-#   PHASE 4  events
-#   PHASE 6  rules
-#   PHASE 7  alarms, notifications
-#   PHASE 9  live sessions
-#   PHASE 13 billing
-#   PHASE 14 analytics
+# Still to mount, by phase (spec §16, §20):
+#   analytics, billing
 # TODO(V1-BLOCKER): mount each module router in its phase; keep OpenAPI in sync.

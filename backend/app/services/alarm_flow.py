@@ -98,6 +98,12 @@ class FlowOutcome:
     def severity(self) -> Severity | None:
         return self.decision.severity if self.decision else None
 
+    def status_label(self) -> str:
+        """Parse status for the delivery record, independent of the alarm outcome."""
+        if self.stage == BLOCKED:
+            return ParseStatus.BLOCKED.value
+        return ParseStatus.PARSED.value if self.decision else ParseStatus.UNPARSED.value
+
 
 def process(
     result: IngestResult,

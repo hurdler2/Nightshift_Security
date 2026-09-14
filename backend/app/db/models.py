@@ -56,6 +56,12 @@ def _created() -> Mapped[datetime]:
 # ---------------------------------------------------------------------------
 
 
+#: Children with ``ondelete="CASCADE"`` declare ``passive_deletes=True``: without it
+#: SQLAlchemy tries to NULL the child's foreign key before the delete, which a NOT NULL
+#: column refuses — so deleting a site would fail instead of taking its recorders with
+#: it. The database performs the cascade; the ORM stays out of its way.
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -66,7 +72,9 @@ class Tenant(Base):
     media_retention_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     created_at: Mapped[datetime] = _created()
 
-    sites: Mapped[list[Site]] = relationship(back_populates="tenant")
+    sites: Mapped[list[Site]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class User(Base):
@@ -125,7 +133,9 @@ class Site(Base):
     created_at: Mapped[datetime] = _created()
 
     tenant: Mapped[Tenant] = relationship(back_populates="sites")
-    devices: Mapped[list[Device]] = relationship(back_populates="site")
+    devices: Mapped[list[Device]] = relationship(
+        back_populates="site", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class Device(Base):
@@ -154,7 +164,9 @@ class Device(Base):
     created_at: Mapped[datetime] = _created()
 
     site: Mapped[Site] = relationship(back_populates="devices")
-    cameras: Mapped[list[Camera]] = relationship(back_populates="device")
+    cameras: Mapped[list[Camera]] = relationship(
+        back_populates="device", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class Camera(Base):
@@ -179,7 +191,9 @@ class Camera(Base):
     created_at: Mapped[datetime] = _created()
 
     device: Mapped[Device] = relationship(back_populates="cameras")
-    zones: Mapped[list[CameraZone]] = relationship(back_populates="camera")
+    zones: Mapped[list[CameraZone]] = relationship(
+        back_populates="camera", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class CameraZone(Base):
@@ -468,6 +482,33 @@ class Rule(Base):
     #: Per-rule overrides of the risk weights (spec §10.3).
     weights: Mapped[dict] = mapped_column(JsonB, default=dict, nullable=False)
     created_at: Mapped[datetime] = _created()
+
+
+class RefreshToken(Base):
+    """Hashed refresh tokens with family tracking (see modules/auth/tokens.py).
+
+    The token itself is never stored. ``family_id`` groups the rotations of one login
+    so a detected replay can revoke the whole session rather than one call.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_refresh_token_hash"),
+        Index("ix_refresh_tokens_family", "family_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    family_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    issued_at: Mapped[datetime] = _created()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replaced_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    user_agent: Mapped[str | None] = mapped_column(String(300))
 
 
 class AuditLog(Base):

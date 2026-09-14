@@ -9,9 +9,24 @@ import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
+#: Production cost. Argon2's defaults are deliberately slow — that is the point of
+#: the algorithm, and a login is not on the alarm path.
 _hasher = PasswordHasher()
 
 ALGORITHM = "HS256"
+
+
+def use_fast_hashing_for_tests() -> None:
+    """Swap in throwaway Argon2 parameters. Test suites only.
+
+    The suite logs in hundreds of times; at production cost that is minutes of pure
+    key stretching per run, which is a good way to make people stop running tests.
+    Never call this from application code — it is the whole security of the password
+    store that is being traded away.
+    """
+    global _hasher
+
+    _hasher = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1, hash_len=16)
 
 
 def hash_password(password: str) -> str:

@@ -770,8 +770,39 @@ POST  /v1/devices/{id}/test-alarm            beklenen test e-postasını doğrul
 GET   /v1/devices/{id}/silence-state         watchdog durumu
 ```
 
+Dördü de hayata geçti. `test-alarm` hiçbir şey göndermez — kaydedicinin posta
+sunucusu biziz, istemcisi değil; kurulumcu cihazda test alarmını tetikler, bu uç
+ne aldığımızı söyler. Gelmediyse cevabı eyleme dönüştürülebilir olur (587/STARTTLS,
+verilen kullanıcı adı, alarm linkage'ında e-posta işaretli mi).
+
 Korunan: auth, tenants, sites, devices, cameras, events, alarms, rules, analytics,
 billing, `/v1/realtime`.
+
+V1'de hayata geçen uçlar (25 yol):
+
+```
+POST  /v1/auth/login|refresh|logout          GET /v1/auth/me
+GET   /v1/sites                              POST /v1/sites
+GET   /v1/sites/{id}                         PATCH /v1/sites/{id}     (arm/disarm denetlenir)
+GET   /v1/sites/{id}/devices                 POST /v1/sites/{id}/devices
+GET   /v1/devices/{id}                       POST /v1/devices/{id}/smtp-account
+GET   /v1/devices/{id}/cameras               POST /v1/devices/{id}/cameras
+PATCH /v1/cameras/{id}
+GET   /v1/cameras/{id}/zones                 PUT  /v1/cameras/{id}/zones   (küme olarak)
+POST  /v1/cameras/{id}/live-sessions         501 + DMSS yönlendirme
+GET   /v1/events                             GET /v1/events/{id}
+GET   /v1/alarms                             GET /v1/alarms/{id}
+POST  /v1/alarms/{id}/acknowledge            POST /v1/alarms/{id}/resolve
+GET   /v1/rules  POST /v1/rules  PATCH /v1/rules/{id}  DELETE /v1/rules/{id}
+POST  /v1/push-devices                       DELETE /v1/push-devices/{id}
+WS    /v1/realtime                           access token ile, tenant kapsamlı
+```
+
+`/v1/realtime`: WebSocket el sıkışması erişim token'ı ile yapılır (tarayıcı başlık
+gönderemediği için query parametresi de kabul edilir; refresh token kabul **edilmez**).
+Yavaş istemci 50 kare geride kalınca düşürülür — alarm yolu tek bir telefonu
+bekleyemez; istemci yeniden bağlanıp REST'ten tazeler. 25 saniyede bir heartbeat:
+sessiz bir gecede "alarm yok" ile "bağlantı yok" ayırt edilebilsin diye.
 
 `POST /v1/cameras/{id}/live-sessions` V1'de `501 Not Implemented` döner ve DMSS
 yönlendirme bilgisini içerir — sessizce boş dönmez.
@@ -868,16 +899,16 @@ Yüz tanıma ileride istenirse ayrı hukuki inceleme, ayrı sözleşme ve ayrı 
 |-----|--------|---------------|
 | **0** | Monorepo, docker compose, servis iskeletleri, lint/test | ✅ tamamlandı |
 | **1** | Dahua CGI probe (kurulum aracı) | ✅ tamamlandı — gerçek cihaz doğrulaması bekliyor |
-| **2** | Kimlik doğrulamalı SMTP endpoint, MIME/medya ayıklama, profil motoru, ham e-posta yakalama | ✅ kod tamam — gerçek DVR'dan gelen e-posta bekleniyor |
+| **2** | Kimlik doğrulamalı SMTP endpoint, MIME/medya ayıklama, profil motoru, ham e-posta yakalama | ✅ kod tamam + çalışan servis (`python -m app.workers.mail_ingest`) — gerçek DVR'dan gelen e-posta bekleniyor |
 | **3** | Provisional profili gerçek e-postayla değiştir, `verified=True` yap | Kanal, olay türü, zaman ve JPEG gerçek cihazdan doğru çıkarılıyor |
-| **4** | Olay kaydı + snapshot storage + realtime (dedup ve yaşam döngüsü ✅ kod tamam) | Kameranın önünden geçince uygulamada fotoğraflı olay görünüyor |
+| **4** | Olay kaydı + snapshot storage + realtime (dedup ve yaşam döngüsü ✅ kod tamam) | ✅ kod tamam — SMTP'den gelen posta gerçek PostgreSQL'e olay/alarm/medya satırı olarak yazılıyor ve `/v1/realtime` üzerinden yayınlanıyor; kalan tek şey gerçek e-posta formatı |
 | **5** | AI ikinci doğrulama | SMD olayı AI ile doğrulanıyor, annotated snapshot üretiliyor |
 | **6** | Zone + schedule + risk + kural motoru | ✅ kod tamam — gece yasak alanda alarm üretiyor, normal alanda üretmiyor |
-| **7** | Push + alarm workflow + escalation (escalation, bastırma, push payload ✅ kod tamam) | Olay → push → alarm detayı → ACK zinciri çalışıyor |
-| **8** | Sağlık: watchdog, video loss, tamper, disk, bastırma hiyerarşisi (✅ kod tamam) | İnternet kesintisi tek alarm üretiyor |
+| **7** | Push + alarm workflow + escalation (escalation, bastırma, push payload ✅ kod tamam) | ✅ kod tamam — FCM HTTP v1 ve APNs token-tabanlı taşıyıcılar, sınıflandırılmış yeniden deneme, ölü token budama, `alarm_deliveries` kaydı; sağlayıcı kimlik bilgileri bekleniyor |
+| **8** | Sağlık: watchdog, video loss, tamper, disk, bastırma hiyerarşisi (✅ kod tamam) | ✅ kod tamam — `python -m app.workers.watchdog` dakikada bir süpürüyor; bir sahanın kaydedicileri birlikte susarsa tek `site_offline`, diğerleri çalışırken tek kaydedici susarsa CRITICAL `device_silent` (çalınmış kutu imzası, §13.1) |
 | **8b** | Filo yayılımı: 1 → 3 → 10 saha, konfigürasyon şablonu (§5.6) | 14 cihaz aynı şablonla kurulu ve olay üretiyor |
 | **9** | Caydırıcı kurulum paketi + DMSS deep link | Sahada ses çalıyor, uygulamadan DMSS açılıyor |
-| **10** | Multi-tenant sertleştirme + RBAC | Tenant A, tenant B verisine hiçbir endpointten erişemiyor |
+| **10** | Multi-tenant sertleştirme + RBAC | ✅ kod tamam — tenant kapsamı yalnızca token'dan gelir, yabancı kayıt 404 döner; REST ve WebSocket için testlerle kanıtlı |
 | **11** | Abonelik ve kullanım sayaçları | Plan limitleri gerçek fonksiyonları etkiliyor |
 | **12** | Analitik | Alarm/gün, yanıt süresi, doğru/yanlış pozitif |
 | **13** | Production hardening | Rate limit, yedek, DR, metrik, yük testi, mobil release |
